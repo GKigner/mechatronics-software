@@ -2179,7 +2179,7 @@ int main(int argc, char **argv) {
     tcsetattr(0, TCSANOW, &newTerm);
 #endif
 
-    bool done = false;
+    bool done = false; //test
     quadlet_t read_data;
     quadlet_t write_data = 0L;
     quadlet_t buffer[128];
