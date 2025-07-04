@@ -3,6 +3,7 @@
 
 // note that this file avoids any use of raw ethernet
 
+#include <cstdint>
 #include <iostream>
 #include <iomanip>
 #include <string>
@@ -25,6 +26,7 @@
 #include "Amp1394Time.h"
 #include "Amp1394BSwap.h"
 #include "MotorVoltage.h"
+#include "BasePort.h"
 
 const uint32_t VALID_BIT        = 0x80000000;  /*!< High bit of 32-bit word */
 const uint32_t DAC_MASK         = 0x0000ffff;  /*!< Mask for 16-bit DAC values */
@@ -37,7 +39,6 @@ const uint32_t RELAY_MASK       = 0x00020000;  /*!< Safety relay enable mask (wr
 const uint32_t RELAY_BIT        = 0x00010000;  /*!< Safety relay enable (read/write) */
 const uint32_t RELAY_ON         = RELAY_MASK|RELAY_BIT;
 const uint32_t RELAY_OFF        = RELAY_MASK;
-
 
 
 // CRC16-CCIT (also called CRC-ITU)
@@ -76,70 +77,6 @@ const uint16_t crc16_table[256] = {
 	0x6e17, 0x7e36, 0x4e55, 0x5e74, 0x2e93, 0x3eb2, 0x0ed1, 0x1ef0
 };
 
-uint16_t ComputeCRC16(unsigned char *data, size_t len)
-{
-    uint16_t crc16 = 0;
-    for (size_t i = 0; i < len; i++)
-        crc16 = (crc16 << 8) ^ crc16_table[((crc16 >> 8) ^ data[i]) & 0x00ff];
-    return  crc16;
-}
-
-void ComputeConfigCRC()
-{
-    uint16_t crc16, crc16Eth;
-    quadlet_t bus_info[4];
-    bus_info[0] = bswap_32(0x31333934);  // "1394"
-    bus_info[1] = bswap_32(0x00ffa000);
-    bus_info[2] = bswap_32(0xfa610e00);  // LCSR CID + BID + E/F
-    bus_info[3] = bswap_32(0x00000007);  // Firmware version
-    std::cout << std::hex;
-    for (unsigned int bver = 0x0e; bver <= 0x0f; bver++) {
-        std::cout << "    // Version: " << ((bver == 0x0e) ? "Ethernet" : "Firewire") << std::endl;
-        std::cout << "    always @(*)" << std::endl;
-        std::cout << "    begin" << std::endl;
-        std::cout << "        case (board_id)" << std::endl;
-        for (unsigned int bnum = 0; bnum < BoardIO::MAX_BOARDS; bnum++) {
-            bus_info[2] = bswap_32(0xfa610e00|(bnum << 4)|bver);
-            crc16 = ComputeCRC16(reinterpret_cast<unsigned char *>(bus_info), sizeof(bus_info));
-            std::cout << "            4'h" << bnum << ": info_crc = 16'h"
-                      << std::setw(4) << std::setfill('0') << crc16 << ";" << std::endl;
-        }
-        std::cout << "        endcase" << std::endl;
-        std::cout << "    end" << std::endl;
-    }
-    quadlet_t root_dir[5];
-    root_dir[0] = bswap_32(0x0c0083c0);
-    root_dir[1] = bswap_32(0x03fa610e);
-    root_dir[2] = bswap_32(0x81000003);
-    root_dir[3] = bswap_32(0x17000001);
-    root_dir[4] = bswap_32(0x81000006);
-    crc16 = ComputeCRC16(reinterpret_cast<unsigned char *>(root_dir), sizeof(root_dir));
-    root_dir[3] = bswap_32(0x17000002);
-    crc16Eth = ComputeCRC16(reinterpret_cast<unsigned char *>(root_dir), sizeof(root_dir));
-    std::cout << "    Root Directory CRC (Rev 1,2): " << std::setw(4) << std::setfill('0') << crc16
-              << ", " << crc16Eth << std::endl;
-    quadlet_t vendor_desc[4];
-    vendor_desc[0] = bswap_32(0x00000000);
-    vendor_desc[1] = bswap_32(0x00000000);
-    vendor_desc[2] = bswap_32(0x4A485520);  // "JHU "
-    vendor_desc[3] = bswap_32(0x4C435352);  // "LCSR"
-    crc16 = ComputeCRC16(reinterpret_cast<unsigned char *>(vendor_desc), sizeof(vendor_desc));
-    std::cout << "    Vendor Descriptor CRC: " << std::setw(4) << std::setfill('0') << crc16
-              << std::endl;
-    quadlet_t model_desc[5];
-    model_desc[0] = bswap_32(0x00000000);
-    model_desc[1] = bswap_32(0x00000000);
-    model_desc[2] = bswap_32(0x46504741);   // "FPGA"
-    model_desc[3] = bswap_32(0x312F514C);   // "1/QL"
-    model_desc[4] = bswap_32(0x41000000);   // "A"
-    crc16 = ComputeCRC16(reinterpret_cast<unsigned char *>(model_desc), sizeof(model_desc));
-    model_desc[3] = bswap_32(0x322F514C);   // "2/QL"
-    crc16Eth = ComputeCRC16(reinterpret_cast<unsigned char *>(model_desc), sizeof(model_desc));
-    std::cout << "    Model Descriptor CRC (Rev 1,2): " << std::setw(4) << std::setfill('0') << crc16
-              << ", " << crc16Eth << std::endl;
-    std::cout << std::dec;
-}
-
 uint32_t KSZ8851CRC(const unsigned char *data, size_t len)
 {
     uint32_t crc = 0xffffffff;
@@ -162,51 +99,6 @@ void ComputeMulticastHash(unsigned char *MulticastMAC, uint8_t &regAddr, uint16_
     int regBit = (crc >> 26) & 0x00F;      // next 4 bits of CRC
     regAddr = 0xA0 + regOffset;            // 0xA0 --> MAHTR0 (MAC Address Hash Table Register 0)
     regData = (1 << regBit);
-}
-
-// Compute the PHY ID1 and ID2 registers, given the OUI (or CID), model number and revision.
-// This is used in the FPGA V3 Virtual PHY, using the JHU LCSR CID (0xFA610E).
-// Unfortunately, there seems to be a discrepancy between different vendors, whether or not
-// the OUI is bit-reversed; based on the specification, it seems that it should be reversed
-// and byte-swapped. Likely the confusion is due to the difference between network transmission
-// order (where the LSB is transmitted first) and the data representation in memory.
-//
-// Parameters:
-//    oui      OUI or CID for vendor (24-bit number)
-//    model    Vendor's model number
-//    rev      Version revision number
-//    name     Descriptive name (e.g., vendor and part)
-//    ref_id1  Reference value for PHY ID1 (from chip datasheet)
-//    ref_id2  Reference value for PHY ID2 (from chip datasheet)
-//    reverse  Whether or not to reverse the OUI/CID bits
-//
-void ComputePhyId(uint32_t oui, uint32_t model, uint32_t rev,
-                  const std::string &name, uint32_t ref_id1, uint32_t ref_id2, bool reverse = true)
-{
-    bool show_ref = (ref_id1 != 0) && (ref_id2 != 0);
-
-    uint32_t oui_rev = bswap_32(EthBasePort::BitReverse32(oui));
-    uint32_t oui_final = reverse ? oui_rev : oui;
-    uint32_t phy_id1 = (oui_final>>6)&0x0000ffff;
-    uint32_t phy_id2 = ((oui_final<<10)&0x0000fc00) | ((model&0x3f) << 4) | (rev&0x0f);
-
-    // Reconstruct OUI/CID from PHY ID1 and ID2. Note that it may not be the same because
-    // the PHY IDs only include 22 of the 24 bits.
-    uint32_t oui_rec = (static_cast<uint32_t>(phy_id1)<<6) | (static_cast<uint32_t>(phy_id2&0xfc00)>>10);
-    if (!reverse)
-        oui_rec = bswap_32(EthBasePort::BitReverse32(oui_rec));
-
-    std::cout << name << (reverse ? " (reversed)" : " (not reversed)")
-              << ": OUI = " << std::hex << std::setfill('0') << std::setw(6)
-              << oui << " (reversed " << oui_rev << "): PHY ID1 = "
-              << std::setw(4) << phy_id1;
-    if (show_ref)
-        std::cout << " (should be " << std::setw(4) << ref_id1 << ")";
-    std::cout << ", PHY ID2 = " << std::setw(4) << phy_id2;
-    if (show_ref)
-        std::cout << " (should be " << std::setw(4) << ref_id2 << ")";
-    std::cout << ", OUI reconstructed = " << std::setw(6)
-              << bswap_32(EthBasePort::BitReverse32(oui_rec)) << std::dec << std::endl;
 }
 
 // Ethernet status from FPGA register 12
@@ -531,7 +423,6 @@ bool InitZync(BasePort *&ZyncPort, std::vector<AmpIO *> &ZyncBoardList, int port
 
 
 
-//HOW TO DEAL WITH DQLA?????
 // NEED TO HANDLE ENSURING EVERYHTING IS USING SAME BOARD!!!!!!!
 
 /****************************************************************
@@ -1305,9 +1196,6 @@ void RapidWriteReadWriteDifferentThingsDifferentMethodsTest(BasePort *portone, B
         // ensure safety relay is on each time
         portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, RELAY_ON);
         Amp1394_Sleep(50*1e-6);
-
-
-
         if (portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, RELAY_OFF)) {
             if (portone->ReadQuadlet(boardNum, BoardIO::BOARD_STATUS, status_result_one_stage_one) && porttwo->ReadQuadlet(boardNum, BoardIO::BOARD_STATUS, status_result_two_stage_one)) {
                 if (portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, RELAY_ON)) {
@@ -1367,361 +1255,131 @@ void RapidWriteReadWriteDifferentThingsDifferentMethodsTest(BasePort *portone, B
     Amp1394_Sleep(50*1e-6);
 }
 
+/****************************************************************
+*   @brief: This function tests for glitches when writing and
+*   reading with the waveform with different communication methods
+*  
+*   @details: Outputs a message when the value written and read are 
+*   different
+*
+*   @param BasePort     (*portone): First communication interface object 
+*                                   that provides access to the physical 
+*                                   connection to the controller boards   
+*   @param BasePort     (*porttwo): Second communication interface object 
+*                                   that provides access to the physical 
+*                                   connection to the controller boards   
+*   @param AmpIO          (*board): board object of the interface for the
+*                                   board being used in this function
+*
+*   @note rereads the waveform a second time to see if any glitches
+*   corrupt the waveform or are temporary
+*
+*   @return none
+****************************************************************/
+void WaveformReadAndWriteDifferentMethodsTest(BasePort *portone, BasePort *porttwo, AmpIO *board) {
+    const unsigned int WLEN = 256;
+    quadlet_t waveform[WLEN];
+    quadlet_t waveform_read[WLEN];
+    size_t i;
+    // Set up square waves that change every 1 msec
+    double clkPer = board->GetFPGAClockPeriod();
+    uint32_t numTicks = static_cast<uint32_t>(0.001/clkPer);
+    std::cout << "Setting waveform with " << numTicks << " counts (1 msec edges)" << std::endl;
+    if ((numTicks&0x7fffff) != numTicks)
+        std::cout << "Warning: numTicks does not fit in 23 bits" << std::endl;
+    unsigned char dout1 = 0;
+    unsigned char dout2 = 0;
+    unsigned char dout3 = 0;
+    unsigned char dout4 = 0;
+    for (i = 0; i < WLEN-1; i++) {
+        if (i%4 == 0) dout1 = 1-dout1;
+        if (i%4 == 1) dout2 = 1-dout2;
+        if (i%4 == 2) dout3 = 1-dout3;
+        if (i%4 == 3) dout4 = 1-dout4;
+        waveform[i] = 0x80000000 | (numTicks << 8) | (dout4 << 3) | (dout3 << 2) | (dout2 << 1) | dout1;
+        waveform_read[i] = 0;
+    }
+    waveform[WLEN-1] = 0;
+    waveform_read[WLEN-1] = 0;
+    std::cout << "Writing test pattern" << std::endl;
 
-// waveform combos and whatnot
+    unsigned char boardNum = board->GetBoardId();
+    // explicitly write the waveform table to directly use portone to write (code based on AmpIO.cpp)
+    if (portone->GetFirmwareVersion(boardNum) < 7 || portone->GetHardwareVersion(boardNum) == dRA1_String) {
+        std::cout << "Writing to waveform table failed" << std::endl;
+        return;
+    }
+    if (WLEN > (portone->GetMaxWriteDataSize()/sizeof(quadlet_t))) {
+        std::cout << "Writing to waveform table failed" << std::endl;
+        return;
+    }
+    static quadlet_t localBuffer[MAX_POSSIBLE_DATA_SIZE/sizeof(quadlet_t)];
+    nodeaddr_t address = 0x8000;
+    for (unsigned short i = 0; i < WLEN; i++) {
+        localBuffer[i] = bswap_32(waveform[i]^0x0000000f);
+    }
+    if (!(portone->WriteBlock(board->GetBoardId(), address, localBuffer, WLEN*sizeof(quadlet_t)))) {
+        std::cout << "Writing to waveform table failed" << std::endl;
+        return;
+    }
 
-
-// AFTERWARDS, HANDLE MAIN WHERE NEED TO DEAL WITH THIGNS TALKED ABOUT ABOVE!!!
-/*
-
-
-
-bool AmpIO::WritePowerEnable(bool state)
-{
-    uint32_t write_data;
-    if (state) {
-        write_data = PWR_ENABLE;
+    // adjustable - might fix any glitch
+    // Amp1394_Sleep(0.0);
+   
+    std::cout << "Reading data";
+    // read once to test glitch 
+     if (porttwo->GetFirmwareVersion(boardNum) < 7 || porttwo->GetHardwareVersion(boardNum) == dRA1_String) {
+         std::cout << "Reading from waveform table failed" << std::endl;
+        return;
+    }
+    if (WLEN > (porttwo->GetMaxReadDataSize()/sizeof(quadlet_t))) {
+        std::cout << "Reading from waveform table failed" << std::endl;
+        return;
+    }
+    bool ret = porttwo->ReadBlock(board->GetBoardId(), address, waveform_read, WLEN*sizeof(quadlet_t));
+    if (ret) {
+        // Byteswap and invert digital output bits (see WriteDigitalOutput and GetDigitalOutput)
+        for (unsigned short i = 0; i < WLEN; i++) {
+            waveform_read[i] = bswap_32(waveform_read[i])^0x0000000f;
+        }
     } else {
-        write_data = PWR_DISABLE;
+        std::cout << "Reading from waveform table failed" << std::endl;
+        return;
     }
-    
-    if (port) {
-        return port->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, write_data);
-    } else {
-        return false;
-    }
-}
 
-bool AmpIO::WriteSafetyRelay(bool state)
-{
-    uint32_t write_data;
-    if (state) {
-        write_data = RELAY_ON;
-    } else {
-        write_data = RELAY_OFF;
-    }
-    
-    if (port) {
-        return port->WriteQuadlet(BoardId, BoardIO::BOARD_STATUS, write_data);
-    } else {
-        return false;
-    }
-}
-
-// see functions above for why this writing works!
-
-// turn on power
-portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, PWR_ENABLE);
-// result hsould be in register 0 bit 18 of 1
-
-// turn on relay
-portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, RELAY_ON);
-// result should be in register 0 bit 16 of 1
-
-// turn off power
-portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, PWR_DISABLE);
-// result hsould be in register 0 bit 18 of 0
-
-// turn off relay
-portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, RELAY_OFF);
-// result should be in register 0 bit 16 of 0
-
-uint32_t status_result;
-// how I think to read:
-portone->ReadQuadlet(boardNum, BoardIO::BOARD_STATUS, status_result);
-
-
-// write at same time?
-
-    // ensure they are off
-    portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, PWR_DISABLE);
-    portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, RELAY_OFF);
-
-    if (portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, PWR_ENABLE) && porttwo->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, RELAY_ON)) {
-        // step one
-        if (portone->ReadQuadlet(boardNum, BoardIO::BOARD_STATUS, status_result)) {
-            // check wrote correctly
+    bool mismatch = false;
+    for (i = 0; i < WLEN; i++) {
+        if (waveform_read[i] != waveform[i]) {
+            std::cout << "Mismatch at quadlet " << i << ", read " << std::hex
+                        << waveform_read[i] << ", expected " << waveform[i]
+                        << std::dec << std::endl;
+            mismatch = true;
         }
-        // failed reading then
-    } else {
-    // already failed
     }
 
-// write and read different stuff same board
-void WriteAndReadDifferentMethodsTest(BasePort *portone, BasePort *porttwo, unsigned char boardNum) {
-    // setup variables and test information
-    bool done = false;
-    quadlet_t read_data;
-    size_t success = 0;
-    size_t compareFailures = 0;
-    quadlet_t write_data = 0x0;
-    int count = 0;
-    nodeaddr_t regnum = 0x14;  // Channel 1 preload (was 0x0F for REG_DEBUG)
-    
-    uint32_t status_result_one;
-    uint32_t status_result_two;
-    bool write_success_one = false;
-    bool write_success_two = false;
-
-
-    // turn on power
-    portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, PWR_ENABLE);
-    // result hsould be in register 0 bit 18 of 1
-
-    // turn on relay
-    porttwo->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, RELAY_ON);
-    // result should be in register 0 bit 16 of 1
-
-
-    portone->ReadQuadlet(boardNum, BoardIO::BOARD_STATUS, status_result_one);
-    portone->ReadQuadlet(boardNum, BoardIO::BOARD_STATUS, status_result_two);
-
-
-    // continuously write and read and look for glithes
-    while (!done) {
-        read_data = -1;
-        write_data++;
-        count++;
-        if (portone->WriteQuadlet(boardNum, regnum, write_data)) {
-            Amp1394_Sleep(50*1e-6);  // sleep 50 us; ADJUSTABLE
-            if (porttwo->ReadQuadlet(boardNum, regnum, read_data)) {
-                if (memcmp((void *)&read_data, (void *)&write_data, 4)) {
-                    compareFailures++;
-                    std::cout << std::hex << "write_data = 0x" << write_data << "  " << " read_data = 0x" << read_data << std::endl;
-                } else {
-                    success++;
-                }
+    // if there was a mismatch above, read again after waiting to see if everything has been 
+    // corrected or waveform table becomes corrupted
+    if (mismatch) {
+        Amp1394_Sleep(0.05);
+        ret = porttwo->ReadBlock(board->GetBoardId(), address, waveform_read, WLEN*sizeof(quadlet_t));
+        if (ret) {
+            // Byteswap and invert digital output bits (see WriteDigitalOutput and GetDigitalOutput)
+            for (unsigned short i = 0; i < WLEN; i++) {
+                waveform_read[i] = bswap_32(waveform_read[i])^0x0000000f;
             }
+        } else {
+            std::cout << "Reading from waveform table (after waiting) failed" << std::endl;
+            return;
         }
-        
-        // end conditions and data tracking
-        if (compareFailures > 200) { // ADJUSTABLE
-            done = true;
-        }
-
-        if (count % 1000 == 0) {
-             std::cout << "attempts = " << std::dec << count << ", success = " << success << ", compare failures = " << compareFailures << std::endl;
-        }
-
-        if (count >= 10000) {
-            done = true;
-            std::cout << "end write_data = 0x" << std::hex << write_data << "\n";
+        for (i = 0; i < WLEN; i++) {
+            if (waveform_read[i] != waveform[i]) {
+                std::cout << "Mismatch at quadlet " << i << ", read " << std::hex
+                            << waveform_read[i] << ", expected " << waveform[i]
+                            << std::dec << std::endl;
+            }
         }
     }
 }
-
-
-// waveform combos and whatnot
-*/
-
-
-/*
-
-// NEED TO WORK ON!!! WHAT IF BAORD LIST IS NOT THE SAME!!!!
-// HOW INPUTTED TO CHOOSE WHICH COMMUNICATIONS!!!
-void ReadSingleRegisterEachBoardTest(BasePort *portone, BasePort *porttwo, const std::vector<AmpIO *> &boardList) {
-    AmpIO *curBoard;
-    unsigned char curBoardNum;
-    std::string portOneString = portone->GetPortTypeString();
-    std::string portTwoString = porttwo->GetPortTypeString();
-    for (auto it = boardList.begin(); it != boardList.end(); it++) {
-        curBoard = *it;
-        curBoardNum = curBoard->GetBoardId();
-        std::cout << "Reading with " << portOneString << " first and reading with " << portTwoString << " second\n";
-        ReadSameRegisterTest(portone, porttwo, curBoardNum);
-        std::cout << "Reading with " << portTwoString << " first and reading with " << portOneString << " second\n";
-        ReadSameRegisterTest(porttwo, portone, curBoardNum);
-    }
-}
-
-// NEED TO WORK ON!!! WHAT IF BAORD LIST IS NOT THE SAME!!!!
-// HOW INPUTTED TO CHOOSE WHICH COMMUNICATIONS!!!
-void SingleRegisterEachBoardTest(BasePort *portone, BasePort *porttwo, const std::vector<AmpIO *> &boardList) {
-    AmpIO *curBoard;
-    unsigned char curBoardNum;
-    std::string portOneString = portone->GetPortTypeString();
-    std::string portTwoString = porttwo->GetPortTypeString();
-    for (auto it = boardList.begin(); it != boardList.end(); it++) {
-        curBoard = *it;
-        curBoardNum = curBoard->GetBoardId();
-        std::cout << "Writing with " << portOneString << " and reading with " << portTwoString << "\n";
-        WriteAndReadOneRegisterDifferentMethodsTest(portone, porttwo, curBoardNum);
-        std::cout << "Writing with " << portTwoString << " and reading with " << portOneString << "\n";
-        WriteAndReadOneRegisterDifferentMethodsTest(porttwo, portone, curBoardNum);
-    }
-}
-
-// are these realistic????
-// does this ever has issue of same bus?
-// write and read different boards?
-// has portone and porttwo write to different boarda dn then read that
-void WriteAndReadDifferentBoardsTest(BasePort *portone, BasePort *porttwo, unsigned char boardNumOne, unsigned char boardNumTwo) {
-    // setup variables and test information
-    bool done = false;
-    quadlet_t read_data_one;
-    quadlet_t read_data_two;
-    size_t success = 0;
-    size_t compareFailures = 0;
-    quadlet_t write_data_one = 0x0;
-    quadlet_t write_data_two = 0x0;
-    int count = 0;
-    nodeaddr_t regnum = 0x14;  // Channel 1 preload (was 0x0F for REG_DEBUG)
-    bool read_first;
-    bool read_second;
-
-    // continuously write and read and look for glithes
-    while (!done) {
-        read_data_one = -1;
-        read_data_two = -1;
-        write_data_one++;
-        write_data_two++;
-        count += 2; // things read read each time
-        read_first = false;
-        read_second = false;
-        if (portone->WriteQuadlet(boardNumOne, regnum, write_data_one)) {
-            read_first = true;
-            Amp1394_Sleep(50*1e-6);  // sleep 50 us; ADJUSTABLE
-        }
-
-        if (porttwo->WriteQuadlet(boardNumTwo, regnum, write_data_two)) {
-            read_second = true;
-            Amp1394_Sleep(50*1e-6);  // sleep 50 us; ADJUSTABLE
-        }
-    
-        // ensure porttwo reads from portone wrote
-        if (porttwo->ReadQuadlet(boardNumOne, regnum, read_data_one)) {
-            if (memcmp((void *)&read_data_one, (void *)&write_data_one, 4)) {
-                compareFailures++;
-                std::cout << std::hex << "write_data_one = 0x" << write_data_one << "  " << " read_data_one = 0x" << read_data_one << std::endl;
-            } else {
-                success++;
-            }
-        }
-
-        // ensure portone reads from porttwo wrote
-        if (portone->ReadQuadlet(boardNumTwo, regnum, read_data_two)) {
-            if (memcmp((void *)&read_data_two, (void *)&write_data_two, 4)) {
-                compareFailures++;
-                std::cout << std::hex << "write_data_two = 0x" << write_data_two << "  " << " read_data_two = 0x" << read_data_two << std::endl;
-            } else {
-                success++;
-            }
-        }
-        
-        // end conditions and data tracking
-        if (compareFailures > 400) { // ADJUSTABLE
-            done = true;
-        }
-
-        if (count % 1000 == 0) {
-             std::cout << "attempts = " << std::dec << count << ", success = " << success << ", compare failures = " << compareFailures << std::endl;
-        }
-
-        if (count >= 20000) {
-            done = true;
-            std::cout << "end write_data = 0x" << std::hex << write_data << "\n";
-        }
-    }
-}
-
-// does this ever has issue of same bus?
-// same as regular but then ensures both ports read the same thing
-void WriteAndReadDifferentBoardsStressTest(BasePort *portone, BasePort *porttwo, unsigned char boardNumOne, unsigned char boardNumTwo) {
-    // setup variables and test information
-    bool done = false;
-    quadlet_t read_data_one;
-    quadlet_t read_data_two;
-    quadlet_t temp_data;
-    size_t success = 0;
-    size_t compareFailures = 0;
-    quadlet_t write_data_one = 0x0;
-    quadlet_t write_data_two = 0x0;
-    int count = 0;
-    nodeaddr_t regnum = 0x14;  // Channel 1 preload (was 0x0F for REG_DEBUG)
-    bool read_first;
-    bool read_second;
-
-    // continuously write and read and look for glithes
-    while (!done) {
-        read_data_one = -1;
-        read_data_two = -1;
-        temp_data = -1;
-        write_data_one++;
-        write_data_two++;
-        count += 2; // things read read each time
-        read_first = false;
-        read_second = false;
-        if (portone->WriteQuadlet(boardNumOne, regnum, write_data_one)) {
-            read_first = true;
-            Amp1394_Sleep(50*1e-6);  // sleep 50 us; ADJUSTABLE
-        }
-
-        if (porttwo->WriteQuadlet(boardNumTwo, regnum, write_data_two)) {
-            read_second = true;
-            Amp1394_Sleep(50*1e-6);  // sleep 50 us; ADJUSTABLE
-        }
-    
-        if (porttwo->ReadQuadlet(boardNumOne, regnum, read_data_one)) {
-            if (memcmp((void *)&read_data_one, (void *)&write_data_one, 4)) {
-                compareFailures++;
-                std::cout << std::hex << "write_data_one = 0x" << write_data_one << "  " << " read_data_one = 0x" << read_data_one << std::endl;
-            } else {
-                success++;
-            }
-        }
-
-        if (portone->ReadQuadlet(boardNumTwo, regnum, read_data_two)) {
-            if (memcmp((void *)&read_data_two, (void *)&write_data_two, 4)) {
-                compareFailures++;
-                std::cout << std::hex << "write_data_two = 0x" << write_data_two << "  " << " read_data_two = 0x" << read_data_two << std::endl;
-            } else {
-                success++;
-            }
-        }
-
-        // ensure portone also reads the same thing as porttwo
-        temp_data = read_data_one;
-        if (portone->ReadQuadlet(boardNumOne, regnum, read_data_one)) {
-            if (memcmp((void *)&read_data_one, (void *)&write_data_one, 4) || memcmp((void *)&read_data_one, (void *)&temp_data, 4)) {
-                compareFailures++;
-                std::cout << std::hex << "write_data_one = 0x" << write_data_one << "  " << " read_data_one = 0x" << read_data_one << std::endl;
-                std::cout << std::hex << "from porttwo: read_data_one = 0x" << temp_data << "  " << "from portone: read_data_one = 0x" << read_data_one << std::endl;
-            } else {
-                success++;
-            }
-        }
-
-        // ensure porttwo also reads the same thing as portone
-        temp_data = read_data_two;
-        if (porttwo->ReadQuadlet(boardNumOne, regnum, read_data_two)) {
-            if (memcmp((void *)&read_data_two, (void *)&write_data_two, 4) || memcmp((void *)&read_data_two, (void *)&temp_data, 4)) {
-                compareFailures++;
-                std::cout << std::hex << "write_data_two = 0x" << write_data_two << "  " << " read_data_two = 0x" << read_data_two << std::endl;
-                std::cout << std::hex << "from portone: read_data_two = 0x" << temp_data << "  " << "from porttwo: read_data_two = 0x" << read_data_two << std::endl;
-            } else {
-                success++;
-            }
-        }
-        
-        // end conditions and data tracking
-        if (compareFailures > 400) { // ADJUSTABLE
-            done = true;
-        }
-
-        if (count % 1000 == 0) {
-             std::cout << "attempts = " << std::dec << count << ", success = " << success << ", compare failures = " << compareFailures << std::endl;
-        }
-
-        if (count >= 20000) {
-            done = true;
-            std::cout << "end write_data = 0x" << std::hex << write_data << "\n";
-        }
-    }
-}
-
-
-*/
-
 
 AmpIO *SelectBoard(const std::string &portName, const std::vector<AmpIO *> &boardList, AmpIO *curBoard)
 {
@@ -1935,43 +1593,6 @@ bool PrintFirewirePHY(AmpIO *board)
     }
     std::cout << "All queried register data is correct" << std::endl;
     return true;
-}
-
-void ReadConfigROM(BasePort *port, unsigned int boardNum)
-{
-    nodeaddr_t addr;
-    quadlet_t read_data;
-    quadlet_t block_data[24];
-    addr = 0xfffff0000400;  // Configuration ROM address
-    if (port->ReadQuadlet(boardNum, addr, read_data))
-        std::cout << "Configuration ROM: " << std::hex << read_data << std::endl;
-    std::cout << "Testing with block read (first entry should be ROM, followed by bus info):" << std::endl;
-    if (port->ReadBlock(boardNum, addr, block_data, sizeof(block_data))) {
-        for (size_t i = 0; i < sizeof(block_data)/sizeof(quadlet_t); i++) {
-            std::cout << std::hex << std::setw(8) << std::setfill('0') << bswap_32(block_data[i]) << "  ";
-            if (i%4 == 3) std::cout << std::endl;
-        }
-    }
-    unsigned int bus_info_len = (bswap_32(block_data[0])&0xff000000) >> 24;
-    std::cout << "Bus_Info length = " << bus_info_len << std::endl;
-    if (bus_info_len > 1) {
-        unsigned int bus_info_crc = bswap_32(block_data[0])&0x0000ffff;
-        uint16_t crc16 = ComputeCRC16(reinterpret_cast<unsigned char *>(&block_data[1]), bus_info_len*sizeof(quadlet_t));
-        std::cout << "Bus_Info CRC: ROM = " << std::hex << bus_info_crc << ", Computed = " << crc16 << std::dec << std::endl;
-        unsigned int root_len = (bswap_32(block_data[bus_info_len+1])&0xffff0000) >> 16;
-        unsigned int root_dir_crc = bswap_32(block_data[bus_info_len+1])&0x0000ffff;
-        std::cout << "Root_Directory length = " << root_len << std::endl;
-        crc16 = ComputeCRC16(reinterpret_cast<unsigned char *>(&block_data[bus_info_len+2]), root_len*sizeof(quadlet_t));
-        std::cout << "Root_Dir CRC: ROM = " << std::hex << root_dir_crc << ", Computed = " << crc16 << std::dec << std::endl;
-    }
-    std::cout << std::endl;
-    std::cout << "Testing again with block read (8th entry should be ROM, followed by bus info):" << std::endl;
-    if (port->ReadBlock(boardNum, addr-7*sizeof(quadlet_t), block_data, sizeof(block_data))) {
-        for (size_t i = 0; i < sizeof(block_data)/sizeof(quadlet_t); i++) {
-            std::cout << std::hex << std::setw(8) << std::setfill('0') << bswap_32(block_data[i]) << "  ";
-            if (i%4 == 3) std::cout << std::endl;
-        }
-    }
 }
 
 bool RunTiming(const std::string &portName, AmpIO *boardTest, EthBasePort *ethPort, const std::string &msgType, size_t numIter = 1000)
@@ -2386,8 +2007,7 @@ bool QuadletReadCallback(EthBasePort &, unsigned char boardId, std::ostream &deb
     return true;
 }
 
-int main(int argc, char **argv)
-{
+int main(int argc, char **argv) {
     bool useEthernet = true;
     BasePort::PortType desiredPort = BasePort::PORT_ETH_UDP;
     int port = 0;
@@ -2452,24 +2072,27 @@ int main(int argc, char **argv)
     std::string curPortString;
 
     // set up firewire and/or zync
-    bool isFwOrZync = false;
+    bool usingFW = false;
+    bool usingZync = false;
+    bool usingEth = false;
 
     if (InitFireWire(FwPort, FwBoardList, port)) {
         std::cout << "FireWire Initialized \n";
-        isFwOrZync = true;
+        usingFW = true;
     } 
 
     if (InitZync(ZyncPort, FwBoardList, port, isVerbose)) {
         std::cout << "Zync Initialized \n";
-        isFwOrZync = true;
+        usingZync = true;
     } 
 
-    if (!isFwOrZync) {
-        std::cout << "Failed to initialize both Zync and FireWire \n";
+    if (!(usingFW || usingZync)) {
+        std::cout << "Failed to initialize both Zync and FireWire; need at least two ports for this test program \n";
         return -1;
     }
 
-    if (FwBoardList.size() > 0) {
+    // set up FireWire boards
+    if (usingFW && FwBoardList.size() > 0) {
         curBoardFw = FwBoardList[0];
         FwPortString = FwPort->GetPortTypeString();
         curBoard = curBoardFw;
@@ -2477,7 +2100,8 @@ int main(int argc, char **argv)
         curPortString = FwPortString;
     }
 
-    if (ZyncBoardList.size() > 0) {
+    // set up Zync boards
+    if (usingZync && ZyncBoardList.size() > 0) {
         curBoardZync = ZyncBoardList[0];
         ZyncPortString = ZyncPort->GetPortTypeString();
         curBoard = curBoardZync;
@@ -2494,6 +2118,7 @@ int main(int argc, char **argv)
     } else if (!curBoard && !curBoardFw) {
         curBoard = curBoardZync;
     }
+    unsigned int fpga_ver = curBoard->GetFpgaVersionMajor();
 
     // setup ethernet
     EthBasePort *EthPort = 0;
@@ -2504,7 +2129,10 @@ int main(int argc, char **argv)
         }
         if (!EthPort) {
             std::cout << "Failed to create Ethernet port" << std::endl;
-            return 0;
+            if (!(usingFW && usingZync)) {
+                std::cout << "Only one port is active; need at least two ports for this porgram" << std::endl;
+                return -1;
+            }
         }
         if (EthPort->IsOK()) {
             EthPortString = EthPort->GetPortTypeString();
@@ -2520,16 +2148,20 @@ int main(int argc, char **argv)
                 curBoardEth = EthBoardList[0];
             }
             if (curPort == FwPort || curPort == ZyncPort) {
-                if (2 == 2) {
+                if (fpga_ver == 2) {
                     InitEthernet(*curBoard, 0);
-                } else if (3 == 3) {
+                } else if (fpga_ver == 3) {
                     std::cout << "FPGA V3, Eth1: ";
                     InitEthernet(*curBoard, 1);
                     std::cout << "FPGA V3, Eth2: ";
                     InitEthernet(*curBoard, 2);
                 }
             }
+            usingEth = true;
         }
+    } else if (!(usingFW && usingZync)) {
+        std::cout << "Only one port is active; need at least two ports for this porgram" << std::endl;
+        return -1;
     }
 
     if ((!curBoardEth) + (!curBoardFw) + (!curBoardZync) > 1) {
@@ -2786,7 +2418,6 @@ int main(int argc, char **argv)
             break;
 
         case 'C':
-            ComputeConfigCRC();
             break;
 
         case 'd':
@@ -2855,12 +2486,6 @@ int main(int argc, char **argv)
             break;
 
         case 'P':
-            ComputePhyId(0x00e04c, 0x11, 0x6, "RealTek RTL8211F", 0x001c, 0xc916);
-            ComputePhyId(0x001018, 0x1f, 0x0, "Broadcom BCM5214", 0x0040, 0x61f0, false);
-            ComputePhyId(0x00800F, 0x0e, 0x0, "Microchip LAN8810", 0x0007, 0xc0e0);
-            ComputePhyId(0x005043, 0x1d, 0x0, "Marvell 88E1510", 0x0141, 0x0dd0, false);
-            // For now, we will use the "reversed bits" convention
-            ComputePhyId(0xfa610e, 0x01, 0x0, "JHU LCSR", 0, 0);
             break;
 
         case 'r':
@@ -2869,8 +2494,6 @@ int main(int argc, char **argv)
             break;
 
         case 'R':
-            if (!false && (curPort == FwPort))
-                ReadConfigROM(curPort, curBoardNum);
             break;
 
         case 't':
