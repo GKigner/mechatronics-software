@@ -489,7 +489,7 @@ void WriteAndReadOneRegisterDifferentMethodsTest(BasePort *portone, BasePort *po
         write_data++;
         count++;
         if (portone->WriteQuadlet(boardNum, regnum, write_data)) {
-            Amp1394_Sleep(50*1e-6);  // sleep 50 us; ADJUSTABLE; this might get rid of the glitch
+            Amp1394_Sleep(0*1e-6);  // sleep 0 us; ADJUSTABLE; this might get rid of the glitch when adjusted
             if (porttwo->ReadQuadlet(boardNum, regnum, read_data)) {
                 if (memcmp((void *)&read_data, (void *)&write_data, 4)) {
                     compareFailures++;
@@ -624,7 +624,7 @@ void ReadDifferentThingsDifferentMethodsTest(BasePort *portone, BasePort *porttw
     std::string portTwoString = porttwo->GetPortTypeString();
     size_t failedQuadRead = 0;
     
-    // ensure power is disabled and safety relay are on
+    // ensure power is enabled and safety relay is on
     portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, PWR_ENABLE);
     Amp1394_Sleep(50*1e-6);
     portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, RELAY_ON);
@@ -1360,6 +1360,744 @@ void WaveformReadAndWriteDifferentMethodsTest(BasePort *portone, BasePort *portt
     }
 }
 
+
+void ReadRegisterAndStatusTest(BasePort *portone, BasePort *porttwo, unsigned char boardNum) {
+    bool done = false;
+    quadlet_t read_data_port_one;
+    quadlet_t read_data_port_two;
+    //char buf[5] = "QLA1";
+    char buf[5] = "1ALQ";
+    size_t success = 0;
+    size_t compareFailures = 0;
+    size_t preload_incorrect = 0;
+    size_t relay_incorrect = 0;
+    size_t readFailures = 0;
+    size_t relay = 0;
+    unsigned long count = 0;
+    bool preload_correct_flag = false;
+    bool relay_correct_flag = false;
+
+    // ensure safety relay is on
+    portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, RELAY_ON);
+    Amp1394_Sleep(50*1e-6);
+
+    while (!done) {
+        read_data_port_one = -1;
+        read_data_port_two = -1;
+        preload_correct_flag = false;
+        relay_correct_flag = false;
+        count++;
+
+        // check they both read correctly
+        if (!(portone->ReadQuadlet(boardNum, 4, read_data_port_one) && porttwo->ReadQuadlet(boardNum, BoardIO::BOARD_STATUS, read_data_port_two))) {
+            readFailures++;
+        } else {
+            if (memcmp((void *)&read_data_port_one, buf, 4) == 0) {
+                preload_correct_flag = true;
+            }
+            if (read_data_port_two & RELAY_BIT) {
+                relay_correct_flag = true;
+            }
+
+            if (preload_correct_flag && relay_correct_flag) {
+                success++;
+            } else {
+                 std::cout << "Preload read as: " << std::hex << read_data_port_one << " should be 1ALQ";
+                if (!preload_correct_flag) {
+                    preload_incorrect++;
+                }
+                if (!relay_correct_flag) {
+                    relay_incorrect++;
+                    std::cout << "Relay was read as OFF should be ON\n";
+                } else {
+                    std::cout << "Relay was read as ON should be ON\n";
+                }
+            }
+        }
+
+        // end conditions and data tracking
+        if (preload_incorrect + relay_incorrect > 200) { // ADJUSTABLE
+            done = true;
+        }
+
+        if (count % 1000 == 0) {
+             std::cout << "attempts = " << std::dec << count << ", success = " << success << "\n";
+        }
+
+        if (count >= 10000) {
+            done = true;
+        }
+    }
+
+    std::cout << "attempts = " << std::dec << count << ", success = " << success << "\n";
+    std::cout << "failures with preload reading: " << std::dec << preload_incorrect << "\n";
+    std::cout << "failures with relay reading: " << std::dec << relay_incorrect << "\n";
+    std::cout << "unsucessful attempts to read " << std::dec << readFailures <<"\n";
+    
+    // ensure safety relay is back off
+    portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, RELAY_OFF);
+    Amp1394_Sleep(50*1e-6);
+}
+
+
+void ReadRegisterWriteStatusTest(BasePort *portone, BasePort *porttwo, unsigned char boardNum) {
+    bool done = false;
+    quadlet_t read_data_port_one;
+    quadlet_t read_data_port_two;
+    //char buf[5] = "QLA1";
+    char buf[5] = "1ALQ";
+    size_t success = 0;
+    size_t compareFailures = 0;
+    size_t preload_incorrect = 0;
+    size_t relay_incorrect = 0;
+    size_t instructionFailures = 0;
+    size_t relay = 0;
+    unsigned long count = 0;
+    bool preload_correct_flag = false;
+    bool relay_correct_flag = false;
+
+
+    while (!done) {
+        // ensure safety relay is off each time
+        portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, RELAY_OFF);
+        Amp1394_Sleep(50*1e-6);
+
+        read_data_port_one = -1;
+        read_data_port_two = -1;
+        preload_correct_flag = false;
+        relay_correct_flag = false;
+        count++;
+
+        // check they both perform correctly
+        if (!(portone->ReadQuadlet(boardNum, 4, read_data_port_one) && porttwo->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, RELAY_ON))) {
+            instructionFailures++;
+        } else {
+            Amp1394_Sleep(50*1e-6); // ensure next read is good
+            if (porttwo->ReadQuadlet(boardNum, BoardIO::BOARD_STATUS, read_data_port_two)) {
+                
+                // now ensure read and write were done correctly 
+                if (memcmp((void *)&read_data_port_one, buf, 4) == 0) {
+                    preload_correct_flag = true;
+                }
+                if (read_data_port_two & RELAY_BIT) {
+                    relay_correct_flag = true;
+                }
+
+                if (memcmp((void *)&read_data_port_one, buf, 4) == 0) {
+                    preload_correct_flag = true;
+                }
+                if (read_data_port_two & RELAY_BIT) {
+                    relay_correct_flag = true;
+                }
+
+                if (preload_correct_flag && relay_correct_flag) {
+                    success++;
+                } else {
+                    std::cout << "Preload read as: " << std::hex << read_data_port_one << " should be 1ALQ";
+                    if (!preload_correct_flag) {
+                        preload_incorrect++;
+                    }
+                    if (!relay_correct_flag) {
+                        relay_incorrect++;
+                        std::cout << "Relay was read as OFF should be ON\n";
+                    } else {
+                        std::cout << "Relay was read as ON should be ON\n";
+                    }
+                }
+            } else {
+                instructionFailures++;
+            }
+        }
+
+        // end conditions and data tracking
+        if (preload_incorrect + relay_incorrect > 200) { // ADJUSTABLE
+            done = true;
+        }
+
+        if (count % 1000 == 0) {
+             std::cout << "attempts = " << std::dec << count << ", success = " << success << "\n";
+        }
+
+        if (count >= 10000) {
+            done = true;
+        }
+    }
+
+    std::cout << "attempts = " << std::dec << count << ", success = " << success << "\n";
+    std::cout << "failures with preload reading: " << std::dec << preload_incorrect << "\n";
+    std::cout << "failures with relay writing: " << std::dec << relay_incorrect << "\n";
+    std::cout << "unsucessful attempts to read or write " << std::dec << instructionFailures <<"\n";
+    
+    // ensure safety relay is back off
+    portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, RELAY_OFF);
+    Amp1394_Sleep(50*1e-6);
+}
+
+void WriteRegisterReadStatusTest(BasePort *portone, BasePort *porttwo, unsigned char boardNum) {
+    bool done = false;
+    quadlet_t read_data_port_one;
+    quadlet_t read_data_port_two;
+    nodeaddr_t regnum = 0x14; 
+    quadlet_t write_data = 0x0;
+    //char buf[5] = "QLA1";
+    char buf[5] = "1ALQ";
+    size_t success = 0;
+    size_t compareFailures = 0;
+    size_t register_incorrect = 0;
+    size_t relay_incorrect = 0;
+    size_t instructionFailures = 0;
+    size_t relay = 0;
+    unsigned long count = 0;
+    bool register_correct_flag = false;
+    bool relay_correct_flag = false;
+
+    // ensure relay is on
+    portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, RELAY_ON);
+    Amp1394_Sleep(50*1e-6);
+
+
+    while (!done) {
+        read_data_port_one = -1;
+        read_data_port_two = -1;
+        write_data++;
+        count++;
+
+        register_correct_flag = false;
+        relay_correct_flag = false;
+
+        if (portone->WriteQuadlet(boardNum, regnum, write_data) && porttwo->ReadQuadlet(boardNum, BoardIO::BOARD_STATUS, read_data_port_two)) {
+            Amp1394_Sleep(50*1e-6);  // sleep 50 us to ensure next read is good
+            if (portone->ReadQuadlet(boardNum, regnum, read_data_port_one)) {
+                // ensure everything is good
+                if (!memcmp((void *)&read_data_port_one, (void *)&write_data, 4)) {
+                    register_correct_flag = true;
+                }
+
+                if (read_data_port_two & RELAY_BIT) {
+                    relay_correct_flag = true;
+                }
+
+                if (register_correct_flag && relay_correct_flag) {
+                    success++;
+                } else {
+                     std::cout << std::hex << "write_data = 0x" << write_data << "  " << " read_data = 0x" << read_data_port_one << std::endl;
+                    if (!register_correct_flag) {
+                       register_incorrect++;
+                    }
+                    if (!relay_correct_flag) {
+                        relay_incorrect++;
+                        std::cout << "Relay was read as OFF should be ON\n";
+                    } else {
+                        std::cout << "Relay was read as ON should be ON\n";
+                    }
+                }
+            } else {
+                instructionFailures++;
+            }
+        } else {
+            instructionFailures++;
+        }
+
+        // end conditions and data tracking
+        if (register_incorrect + relay_incorrect > 200) { // ADJUSTABLE
+            done = true;
+        }
+
+        if (count % 1000 == 0) {
+             std::cout << "attempts = " << std::dec << count << ", success = " << success << "\n";
+        }
+
+        if (count >= 10000) {
+            done = true;
+        }
+    }
+
+    std::cout << "attempts = " << std::dec << count << ", success = " << success << "\n";
+    std::cout << "failures with register writing: " << std::dec << register_incorrect << "\n";
+    std::cout << "failures with relay reading: " << std::dec << relay_incorrect << "\n";
+    std::cout << "unsucessful attempts to read or write " << std::dec << instructionFailures <<"\n";
+    
+    // ensure safety relay is back off
+    portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, RELAY_OFF);
+    Amp1394_Sleep(50*1e-6);
+}
+
+void WriteRegisterWriteStatusTest(BasePort *portone, BasePort *porttwo, unsigned char boardNum) {
+    bool done = false;
+    quadlet_t read_data_port_one;
+    quadlet_t read_data_port_two;
+    nodeaddr_t regnum = 0x14; 
+    quadlet_t write_data = 0x0;
+    //char buf[5] = "QLA1";
+    char buf[5] = "1ALQ";
+    size_t success = 0;
+    size_t compareFailures = 0;
+    size_t register_incorrect = 0;
+    size_t relay_incorrect = 0;
+    size_t instructionFailures = 0;
+    size_t relay = 0;
+    unsigned long count = 0;
+    bool register_correct_flag = false;
+    bool relay_correct_flag = false;
+
+
+    while (!done) {
+        // ensure relay is off each time
+        portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, RELAY_OFF);
+        Amp1394_Sleep(50*1e-6);
+        read_data_port_one = -1;
+        read_data_port_two = -1;
+        write_data++;
+        count++;
+
+        register_correct_flag = false;
+        relay_correct_flag = false;
+
+        if (portone->WriteQuadlet(boardNum, regnum, write_data) && porttwo->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, RELAY_ON)) {
+            Amp1394_Sleep(50*1e-6);  // sleep 50 us to ensure next read is good
+            if (portone->ReadQuadlet(boardNum, regnum, read_data_port_one)) {
+                Amp1394_Sleep(50*1e-6);  // sleep 50 us to ensure next read is good
+                if (porttwo->ReadQuadlet(boardNum, BoardIO::BOARD_STATUS, read_data_port_two)) {
+                    if (!memcmp((void *)&read_data_port_one, (void *)&write_data, 4)) {
+                        register_correct_flag = true;
+                    }
+                    if (read_data_port_two & RELAY_BIT) {
+                        relay_correct_flag = true;
+                    }
+
+                    if (register_correct_flag && relay_correct_flag) {
+                        success++;
+                    } else {
+                        std::cout << std::hex << "write_data = 0x" << write_data << "  " << " read_data = 0x" << read_data_port_one << std::endl;
+                        if (!register_correct_flag) {
+                        register_incorrect++;
+                        }
+                        if (!relay_correct_flag) {
+                            relay_incorrect++;
+                            std::cout << "Relay was read as OFF should be ON\n";
+                        } else {
+                            std::cout << "Relay was read as ON should be ON\n";
+                        }
+                    }
+                } else {
+                    instructionFailures++;
+                }
+            } else {
+                instructionFailures++;
+            }
+        } else {
+            instructionFailures++;
+        }
+
+        // end conditions and data tracking
+        if (register_incorrect + relay_incorrect > 200) { // ADJUSTABLE
+            done = true;
+        }
+
+        if (count % 1000 == 0) {
+             std::cout << "attempts = " << std::dec << count << ", success = " << success << "\n";
+        }
+
+        if (count >= 10000) {
+            done = true;
+        }
+    }
+
+    std::cout << "attempts = " << std::dec << count << ", success = " << success << "\n";
+    std::cout << "failures with register writing: " << std::dec << register_incorrect << "\n";
+    std::cout << "failures with relay writing: " << std::dec << relay_incorrect << "\n";
+    std::cout << "unsucessful attempts to read or write " << std::dec << instructionFailures <<"\n";
+    
+    // ensure safety relay is back off
+    portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, RELAY_OFF);
+    Amp1394_Sleep(50*1e-6);
+}
+
+void ReadRegisterAndStatusStressTest(BasePort *portone, BasePort *porttwo, unsigned char boardNum) {
+    bool done = false;
+    quadlet_t read_data_port_one_first_read;
+    quadlet_t read_data_port_two_first_read;
+    quadlet_t read_data_port_one_second_read;
+    quadlet_t read_data_port_two_second_read;
+    //char buf[5] = "QLA1";
+    char buf[5] = "1ALQ";
+    size_t success = 0;
+    size_t compareFailures = 0;
+    size_t preload_portone_failures = 0;
+    size_t preload_porttwo_failures = 0;
+    size_t relay_portone_failures = 0;
+    size_t relay_porttwo_failures = 0;
+    size_t relay_incorrect = 0;
+    size_t readFailures = 0;
+    size_t relay = 0;
+    unsigned long count = 0;
+    bool preload_correct_flag_first_read = false;
+    bool relay_correct_flag_first_read = false;
+    bool preload_correct_flag_second_read = false;
+    bool relay_correct_flag_second_read = false;
+    std::string portOneString = portone->GetPortTypeString();
+    std::string portTwoString = porttwo->GetPortTypeString();
+
+    // ensure safety relay is on
+    portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, RELAY_ON);
+    Amp1394_Sleep(50*1e-6);
+
+    while (!done) {
+        read_data_port_one_first_read = -1;
+        read_data_port_two_first_read = -1;
+        read_data_port_one_second_read = -1;
+        read_data_port_two_second_read = -1;
+        preload_correct_flag_first_read = false;
+        relay_correct_flag_first_read = false;
+        preload_correct_flag_second_read = false;
+        relay_correct_flag_second_read = false;
+
+        count++;
+
+        // check they both read correctly
+        if ((portone->ReadQuadlet(boardNum, 4, read_data_port_one_first_read) && porttwo->ReadQuadlet(boardNum, BoardIO::BOARD_STATUS, read_data_port_two_first_read))
+            && portone->ReadQuadlet(boardNum, BoardIO::BOARD_STATUS, read_data_port_one_second_read) && porttwo->ReadQuadlet(boardNum, 4, read_data_port_two_second_read)) {
+            
+            // ensure preload read correctly by both
+            if (memcmp((void *)&read_data_port_one_first_read, buf, 4) == 0) {
+                preload_correct_flag_first_read = true;
+            }
+
+            if (memcmp((void *)&read_data_port_two_second_read, buf, 4) == 0) {
+                preload_correct_flag_second_read = true;
+            }
+
+            // ensure relay read correctly by both
+            if (read_data_port_two_first_read & RELAY_BIT) {
+                relay_correct_flag_first_read = true;
+            }
+
+            if (read_data_port_one_second_read & RELAY_BIT) {
+                relay_correct_flag_second_read = true;
+            }
+
+            if (preload_correct_flag_first_read && preload_correct_flag_second_read && relay_correct_flag_first_read && relay_correct_flag_second_read) {
+                    success++;
+            } else {
+                // error messages
+                std::cout << "Preload read by " << portOneString << " as: " << std::hex << read_data_port_one_first_read << " should be 1ALQ\n";
+                std::cout << "Preload read by " << portTwoString << " as: " << std::hex << read_data_port_two_second_read << " should be 1ALQ\n";
+                if (!preload_correct_flag_first_read) {
+                    preload_portone_failures++;
+                }
+                if (!preload_correct_flag_second_read) {
+                    preload_porttwo_failures++;
+                }
+
+                
+                if (!relay_correct_flag_second_read) {
+                    relay_portone_failures++;
+                    std::cout << "Relay was read by " << portOneString << " as OFF should be ON\n";
+                } else {
+                    std::cout << "Relay was read by " << portOneString << "as ON should be ON\n";
+                }
+
+                if (!relay_correct_flag_first_read) {
+                    relay_porttwo_failures++;
+                    std::cout << "Relay was read by " << portTwoString << " as OFF should be ON\n";
+                } else {
+                    std::cout << "Relay was read by " << portTwoString << "as ON should be ON\n";
+                }
+            }
+        } else {
+            readFailures++;
+        }
+           
+
+        // end conditions and data tracking
+        if (preload_portone_failures + preload_porttwo_failures + relay_portone_failures + relay_porttwo_failures > 400) { // ADJUSTABLE
+            done = true;
+        }
+
+        if (count % 1000 == 0) {
+             std::cout << "attempts = " << std::dec << count << ", success = " << success << "\n";
+        }
+
+        if (count >= 10000) {
+            done = true;
+        }
+    }
+
+    std::cout << "attempts = " << std::dec << count << ", success = " << success << "\n";
+    std::cout << "failures with " << portOneString << "preload reading: " << std::dec << preload_portone_failures << "\n";
+    std::cout << "failures with " << portTwoString << "preload reading: " << std::dec << preload_porttwo_failures << "\n";
+    std::cout << "failures with " << portOneString << "relay reading: " << std::dec << relay_portone_failures << "\n";
+    std::cout << "failures with " << portTwoString << "relay reading: " << std::dec << relay_porttwo_failures << "\n";
+    std::cout << "unsucessful attempts to read " << std::dec << readFailures <<"\n";
+    
+    // ensure safety relay is back off
+    portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, RELAY_OFF);
+    Amp1394_Sleep(50*1e-6);
+}
+
+
+void WriteRegisterAndStatusStressTest(BasePort *portone, BasePort *porttwo, unsigned char boardNum) {
+    bool done = false;
+    quadlet_t register_read;
+    quadlet_t status_read;
+    quadlet_t read_data_port_one_second_read;
+    quadlet_t read_data_port_two_second_read;
+    //char buf[5] = "QLA1";
+    nodeaddr_t regnum = 0x14; 
+    quadlet_t write_data = 0x0;
+    quadlet_t write_data_adj = write_data+1;
+    size_t success = 0;
+    size_t compareFailures = 0;
+    size_t preload_portone_failures = 0;
+    size_t preload_porttwo_failures = 0;
+    size_t relay_portone_failures = 0;
+    size_t relay_porttwo_failures = 0;
+    size_t relay_failures = 0;
+    size_t power_failures = 0;
+    size_t register_failures = 0;
+    size_t relay_incorrect = 0;
+    size_t instructionFailures = 0;
+    size_t relay = 0;
+    unsigned long count = 0;
+    bool register_correct_flag = false;
+    bool relay_correct_flag = false;
+    bool power_correct_flag = false;
+    std::string portOneString = portone->GetPortTypeString();
+    std::string portTwoString = porttwo->GetPortTypeString();
+
+    while (!done) {
+        register_read = -1;
+        status_read = -1;
+        register_correct_flag = false;
+        relay_correct_flag = false;
+        power_correct_flag = false;
+        // ensure power is disabled and safety relay is off
+        portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, PWR_DISABLE);
+        Amp1394_Sleep(50*1e-6);
+        portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, RELAY_OFF);
+        Amp1394_Sleep(50*1e-6);
+
+        write_data++;
+        write_data_adj++;
+        count++;
+
+        // check they everythign wrote correctly
+        if (portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, PWR_ENABLE) && porttwo->WriteQuadlet(boardNum, regnum, write_data)
+            && portone->WriteQuadlet(boardNum, regnum, write_data_adj) && porttwo->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, RELAY_ON)) {
+            // ensure reads are done correctly
+            Amp1394_Sleep(50*1e-6);
+            portone->ReadQuadlet(boardNum, regnum, register_read);
+            Amp1394_Sleep(50*1e-6);
+            portone->ReadQuadlet(boardNum, BoardIO::BOARD_STATUS, status_read);
+            Amp1394_Sleep(50*1e-6);
+            
+            // ensure register written correctly
+            // note does not ensure that first didn't fail
+
+            if (memcmp((void *)&register_read, &(write_data_adj), 4) == 0) {
+                register_correct_flag = true;
+            }
+
+            // ensure relay written correctly
+            if (status_read & RELAY_BIT) {
+                relay_correct_flag = true;
+            }
+
+            if (status_read & PWR_ENABLE_BIT) {
+                power_correct_flag = true;
+            }
+
+            if (power_correct_flag && relay_correct_flag && register_correct_flag) {
+                    success++;
+            } else {
+                // error messages
+                std::cout << "Register read as: " << std::hex << register_read << " should be " << (write_data_adj) << "\n";
+                if (!register_correct_flag) {
+                    register_failures++;
+                }
+
+                if (!relay_correct_flag) {
+                    relay_failures++;
+                    std::cout << "Relay was read as OFF should be ON\n";
+                } else {
+                    std::cout << "Relay was read as ON should be ON\n";
+                }
+
+                if (!power_correct_flag) {
+                    power_failures++;
+                    std::cout << "Power was read as OFF should be ON\n";
+                } else {
+                    std::cout << "Power was read as ON should be ON\n";
+                }
+            }
+        } else {
+            instructionFailures++;
+        }
+           
+        // end conditions and data tracking
+        if (power_failures + relay_failures + register_failures > 300) { // ADJUSTABLE
+            done = true;
+        }
+
+        if (count % 1000 == 0) {
+             std::cout << "attempts = " << std::dec << count << ", success = " << success << "\n";
+        }
+
+        if (count >= 10000) {
+            done = true;
+        }
+    }
+
+    std::cout << "attempts = " << std::dec << count << ", success = " << success << "\n";
+    std::cout << "failures with register writing: " << std::dec << register_failures << "\n";
+    std::cout << "failures with relay writing: " << std::dec << relay_failures << "\n";
+    std::cout << "failures with power writing: " << std::dec << power_failures << "\n";
+    std::cout << "unsucessful attempts to read or write " << std::dec << instructionFailures <<"\n";
+    
+    // ensure safety relay is back off
+    portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, RELAY_OFF);
+    Amp1394_Sleep(50*1e-6);
+    portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, PWR_DISABLE);
+    Amp1394_Sleep(50*1e-6);
+}
+
+void AlternatingReadAndWriteRegisterAndStatusStressTest(BasePort *portone, BasePort *porttwo, unsigned char boardNum){
+    bool done = false;
+    quadlet_t read_data_port_one_first_read;
+    quadlet_t read_data_port_two_first_read;
+    quadlet_t read_data_port_one_second_read;
+    quadlet_t read_data_port_two_second_read;
+    char buf[5] = "1ALQ";
+    size_t success = 0;
+    size_t compareFailures = 0;
+    size_t preload_portone_failures = 0;
+    size_t preload_porttwo_failures = 0;
+    size_t relay_portone_failures = 0;
+    size_t relay_porttwo_failures = 0;
+    size_t relay_incorrect = 0;
+    size_t readFailures = 0;
+    size_t power_failures = 0;
+    size_t register_failures = 0;
+    size_t relay_failures = 0;
+    size_t instructionFailures = 0;
+    size_t relay = 0;
+    unsigned long count = 0;
+    bool preload_correct_flag_first_read = false;
+    bool relay_correct_flag_first_read = false;
+    bool preload_correct_flag_second_read = false;
+    bool relay_correct_flag_second_read = false;
+    bool register_correct_flag_first = false;
+    bool register_correct_flag_second = false;
+    bool relay_correct_flag = false;
+    bool power_correct_flag = false;
+    quadlet_t register_read = -1;
+    quadlet_t status_read = -1;
+    quadlet_t register_read_first;
+    quadlet_t register_read_second;
+    quadlet_t status_read_first;
+    quadlet_t status_read_second;
+    nodeaddr_t regnum = 0x14;
+    quadlet_t write_data = 0x0;
+    quadlet_t write_data_adj = write_data+1;
+    std::string portOneString = portone->GetPortTypeString();
+    std::string portTwoString = porttwo->GetPortTypeString();
+
+    while (!done) {
+        register_read = -1;
+        status_read = -1;
+        register_correct_flag_first = false;
+        register_correct_flag_second = false;
+        relay_correct_flag = false;
+        power_correct_flag = false;
+        // ensure power is disabled and safety relay is off
+        portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, PWR_DISABLE);
+        Amp1394_Sleep(50*1e-6);
+        portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, RELAY_OFF);
+        Amp1394_Sleep(50*1e-6);
+
+        write_data++;
+        write_data_adj++;
+        count++;
+
+        // check they everythign wrote and read correctly
+        if (portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, PWR_ENABLE) && porttwo->WriteQuadlet(boardNum, regnum, write_data)
+            && portone->ReadQuadlet(boardNum, regnum, register_read_first) && porttwo->ReadQuadlet(boardNum, BoardIO::BOARD_STATUS, status_read_first)
+            && porttwo->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, RELAY_ON) && portone->ReadQuadlet(boardNum, regnum, status_read_second)
+            && portone->WriteQuadlet(boardNum, regnum, (write_data_adj)) &&  porttwo->ReadQuadlet(boardNum, BoardIO::BOARD_STATUS, register_read_second)) {
+            // ensure register written correctly
+            // note does not ensure that first didn't fail
+            if (memcmp((void *)&register_read_first, &(write_data), 4) == 0) {
+                register_correct_flag_first = true;
+            }
+
+            if (memcmp((void *)&register_read_second, &(write_data_adj), 4) == 0) {
+                register_correct_flag_second = true;
+            }
+
+            // ensure relay and power written and read correctly
+            if (status_read_first & RELAY_BIT) {
+                relay_correct_flag = true;
+            }
+
+            if (status_read_second & PWR_ENABLE_BIT) {
+                power_correct_flag = true;
+            }
+
+            if (register_correct_flag_first && register_correct_flag_second && relay_correct_flag && power_correct_flag) {
+                    success++;
+            } else {
+                // error messages
+                std::cout << "Register read at first as: " << std::hex << register_read_first << " should be " << write_data << "\n";
+                std::cout << "Register read at second as: " << std::hex << register_read_second<< " should be " << (write_data_adj) << "\n";
+                if (!(register_correct_flag_first && register_correct_flag_second)) {
+                    register_failures++;
+                }
+
+                if (!relay_correct_flag) {
+                    relay_failures++;
+                    std::cout << "Relay was read as OFF should be ON\n";
+                } else {
+                    std::cout << "Relay was read as ON should be ON\n";
+                }
+
+                if (!power_correct_flag) {
+                    power_failures++;
+                    std::cout << "Power was read as OFF should be ON\n";
+                } else {
+                    std::cout << "Power was read as ON should be ON\n";
+                }
+            }
+        } else {
+            instructionFailures++;
+        }
+           
+        // end conditions and data tracking
+        if (power_failures + relay_failures + register_failures > 300) { // ADJUSTABLE
+            done = true;
+        }
+
+        if (count % 1000 == 0) {
+             std::cout << "attempts = " << std::dec << count << ", success = " << success << "\n";
+        }
+
+        if (count >= 10000) {
+            done = true;
+        }
+    }
+
+    std::cout << "attempts = " << std::dec << count << ", success = " << success << "\n";
+    std::cout << "failures with register writing: " << std::dec << register_failures << "\n";
+    std::cout << "failures with relay writing: " << std::dec << relay_failures << "\n";
+    std::cout << "failures with power writing: " << std::dec << power_failures << "\n";
+    std::cout << "unsucessful attempts to read or write " << std::dec << instructionFailures <<"\n";
+    
+    // ensure safety relay is back off
+    portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, RELAY_OFF);
+    Amp1394_Sleep(50*1e-6);
+    portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, PWR_DISABLE);
+    Amp1394_Sleep(50*1e-6);
+}
+
 AmpIO *SelectBoard(const std::string &portName, const std::vector<AmpIO *> &boardList, AmpIO *curBoard) {
     AmpIO *newBoard = curBoard;
     if (boardList.size() > 1) {
@@ -1568,14 +2306,17 @@ int main(int argc, char **argv) {
     std::cout << std::endl << "Glitch Test Program" << std::endl;
     std::cout << "Ports availible: \n";
     if (usingEth) {
-        std::cout << EthPortString << "\n"
+        std::cout << EthPortString << "\n";
     } 
     if (usingFW) {
-        std::cout << FwPortString << "\n"
+        std::cout << FwPortString << "\n";
     } 
     if (usingZync) {
-        std::cout << ZyncPortString << "\n"
+        std::cout << ZyncPortString << "\n";
     } 
+
+    std::cout << "To run a test, enter the number or letter before the ')' and then a newline\n"
+    std::cout << "Fox example, only enter \"q\" or \"4\" or \"17\" and then a newline\n"
     
     while (!done) {
         unsigned char curBoardNum = curBoard->GetBoardId();
@@ -1633,51 +2374,15 @@ int main(int argc, char **argv) {
         std::cout << "  7) two commuication methods read, then write different things, then read status\n";
         std::cout << "  8) two commuication methods write different things, then read, then write different things to status\n";
         std::cout << "  9) one communication method writes to waveform and one reads from waveform\n";
-        
+        std::cout << "  10) one communication method reads status and one reads register \n";
+        std::cout << "  11) one communication method writes to status and one reads register\n";
+        std::cout << "  12) one communication method reads status and one write to register\n";
+        std::cout << "  13) one commuication methods writes to status, one writes to register\n";
+        std::cout << "  14) two communication methods read both status and register\n";
+        std::cout << "  15) two communication methods write to both status and register\n";
+        std::cout << "  16) two communication methods write to and read from both status and register\n";
 
 
-
-
-
-
-        std::cout << "  1) Quadlet write (power/relay toggle) to board" << std::endl;
-        std::cout << "  2) Quadlet read from board" << std::endl;
-        std::cout << "  3) Block read from board" << std::endl;
-        std::cout << "  4) Block write to board" << std::endl;
-        std::cout << "  5) Ethernet port status" << std::endl;
-        if (curPort == FwPort)
-            std::cout << "  6) Initialize Ethernet port" << std::endl;
-        std::cout << "  7) Ethernet status info" << std::endl;
-        if (true || (curPort == EthPort))
-            std::cout << "  8) Multicast quadlet read" << std::endl;
-        std::cout << "  a) WriteAllBoards test" << std::endl;
-        std::cout << "  B) BlockWrite test (Waveform table)" << std::endl;
-        if (((curPort == EthPort) && (EthBoardList.size() > 1)) ||
-            ((curPort == FwPort) && (FwBoardList.size() > 1)))
-            std::cout << "  b) Change board" << std::endl;
-        std::cout << "  C) Compute Configuration ROM CRC" << std::endl;
-        std::cout << "  c) Continuous test (quadlet reads)" << std::endl;
-        std::cout << "  d) Continuous write test (quadlet write)" << std::endl;
-        if ((fpga_ver == 2) && (curPort == FwPort))
-            std::cout << "  e) Read RXFCTR packet count (FPGA V2)" << std::endl;
-        std::cout << "  f) Print Firewire PHY registers" << std::endl;
-        std::cout << "  i) Read IPv4 address" << std::endl;
-        std::cout << "  I) Clear IPv4 address" << std::endl;
-        std::cout << "  m) Initialize and test I/O Expander (QLA 1.5+)" << std::endl;
-        if (curBoardFw && curBoardEth)
-            std::cout << "  p) Toggle port (" << FwPortString << " or " << EthPortString << ")" << std::endl;
-        std::cout << "  P) Compute Ethernet PHY IDs" << std::endl;
-        std::cout << "  r) Check Firewire bus generation and rescan if needed" << std::endl;
-        if (!false && (curPort == FwPort))
-            std::cout << "  R) Read Firewire Configuration ROM" << std::endl;
-        std::cout << "  t) Run timing analysis" << std::endl;
-        std::cout << "  v) Measure motor power supply voltage (QLA 1.5+)" << std::endl;
-        std::cout << "  w) Test waveform buffer" << std::endl;
-        std::cout << "  x) Read Ethernet debug data" << std::endl;
-        std::cout << "  X) Clear Ethernet errors" << std::endl;
-        std::cout << "  y) Read Firewire debug data" << std::endl;
-        std::cout << "  z) Check Ethernet initialization" << std::endl;
-        std::cout << "Select option: ";
 
         int c = getchar();
         std::cout << std::endl << std::endl;
