@@ -109,66 +109,6 @@ void PrintEthernetStatus(AmpIO &Board)
         EthBasePort::PrintStatus(std::cout, status);
 }
 
-// Ethernet status, as reported by KSZ8851 on FPGA board
-void PrintEthernetPhyStatusV2(AmpIO &Board)
-{
-    uint16_t reg;
-    Board.ReadKSZ8851Reg(0xF8, reg);
-    std::cout << "Port 1 status:";
-    if (reg & 0x0020) std::cout << " link-good";
-    if (reg & 0x0040) std::cout << " an-done";
-    if (reg & 0x0200) std::cout << " full-duplex";
-    else std::cout << " half-duplex";
-    if (reg & 0x0400) std::cout << " 100Mbps";
-    else std::cout << " 10Mbps";
-    if (reg & 0x2000) std::cout << " polarity-reversed";
-    std::cout << std::endl;
-}
-
-void PrintEthernetPhyStatusV3(AmpIO &Board, unsigned int chan)
-{
-    std::cout << "PHY" << chan << ":";
-    uint16_t reg;
-    unsigned int phyAddr = FpgaIO::PHY_RTL8211F;
-    // This should be on page 0xa43, but seems to work fine on default page
-    if (!Board.ReadRTL8211F_Register(chan, phyAddr, FpgaIO::RTL8211F_PHYSR, reg)) {
-        std::cout << " failed to read PHYSR" << std::endl;
-        return;
-    }
-    if (reg & 0x0004) std::cout << " link-good";
-    if (reg & 0x0008) std::cout << " full-duplex";
-    else std::cout << " half-duplex";
-    unsigned int speed = (reg & 0x0030)>>4;
-    const char *speedStr[4] = { "10Mbps", "100 Mbps", "1000 Mbps", "??" };
-    std::cout << " " << speedStr[speed];
-    if (reg & 0x0002) std::cout << " polarity-reversed";
-    std::cout << std::endl;
-
-    // Speed setting uses bits 6 and 13, as follows:
-    //
-    //   speed | Mbps | 6,13  | register value
-    //     0   |   10 | 0, 0  |     0x0000
-    //     1   |  100 | 0, 1  |     0x2000
-    //     2   | 1000 | 1, 0  |     0x0040
-    //     3   |   ?? | 1, 1  |     0x2040
-    unsigned short speedMap[4] = { 0x0000, 0x2000, 0x0040, 0x2040 };
-    std::cout << "Reading GMII core register: ";
-    uint16_t coreReg;
-    if (Board.ReadRTL8211F_Register(chan, FpgaIO::PHY_GMII_CORE, 16, coreReg)) {
-        std::cout << std::hex << coreReg << std::dec;
-        for (size_t i = 0; i < 4; i++) {
-            if ((coreReg&0x2040) == speedMap[i]) {
-                std::cout << ", Speed: " << speedStr[i];
-                break;
-            }
-        }
-        std::cout << std::endl;
-    }
-    else {
-        std::cout << " failed to read to GMII core register" << std::endl;
-    }
-}
-
 // Check contents of KSZ8851 register
 bool CheckRegister(AmpIO &Board, uint8_t regNum, uint16_t mask, uint16_t value)
 {
@@ -297,8 +237,6 @@ bool CheckEthernetV3(AmpIO &Board, unsigned int chan)
     return (phyid1 == 0x001c) && (phyid2 == 0xc916);
 }
 
-
-
 // eth_port:  0 for FPGA V2, 1 or 2 for FPGA V3
 bool InitEthernet(AmpIO &Board, unsigned int eth_port) {
     if (Board.GetFirmwareVersion() < 5) {
@@ -397,6 +335,40 @@ bool InitFireWire(BasePort *&FwPort, std::vector<AmpIO *> &FwBoardList, int port
     #endif
 }
 
+
+/****************************************************************
+*   @brief  Initialize a Zynq-EMIO communication port and discover boards
+*
+*   @details
+*   Creates a new `ZynqEmioPort` object for the specified *port* number.
+*   If the port opens successfully the routine:
+*     1. Enables or disables verbose output according to *isVerbose*.
+*     2. Assigns the newly-created object to the caller-provided reference
+*        `ZyncPort`.
+*     3. Queries node 0 (the only node on an EMIO link) for its board ID.
+*        When the ID is in the valid range, the function constructs an
+*        `AmpIO` handle for that board, registers it with the port, and
+*        appends the pointer to *ZyncBoardList*.
+*
+*   @param  BasePort *&        ZyncPort        Reference that receives the
+*                                              newly created `ZynqEmioPort`
+*                                              pointer on success
+*   @param  std::vector<AmpIO *>& ZyncBoardList
+*                                              Vector to which discovered
+*                                              `AmpIO` board objects are
+*                                              appended
+*   @param  int                port            Device index of the Zynq
+*                                              EMIO interface (usually 0)
+*   @param  bool               isVerbose       Enables verbose printing if
+*                                              set to *true*
+*
+*   @note   The routine is compiled only when `Amp1394_HAS_EMIO` is defined.
+*           When that macro is absent the stub always returns *false*.
+*
+*   @return bool
+*           *true*  — Port initialised (even if no board detected)  
+*           *false* — Port failed to open or EMIO support not available
+****************************************************************/
 bool InitZync(BasePort *&ZyncPort, std::vector<AmpIO *> &ZyncBoardList, int port, bool isVerbose) {
     #if Amp1394_HAS_EMIO
         ZynqEmioPort *ZynqPort;
@@ -421,16 +393,9 @@ bool InitZync(BasePort *&ZyncPort, std::vector<AmpIO *> &ZyncBoardList, int port
     #endif
 }
 
-
-
-// NEED TO HANDLE ENSURING EVERYHTING IS USING SAME BOARD!!!!!!!
-
 /****************************************************************
-*   @brief: This function tests for glitches when reading the same register
-*   using different communication methods
-*  
-*   @details: Outputs a message when the value read by the methods are 
-*   different and some statistics along the way and at the end
+*   @brief this function continuously reads from the same register 
+*   using two different communication methods to test for glitches
 *
 *   @param BasePort     (*portone): First communication interface object 
 *                                   that provides access to the physical 
@@ -440,7 +405,8 @@ bool InitZync(BasePort *&ZyncPort, std::vector<AmpIO *> &ZyncBoardList, int port
 *                                   connection to the controller boards   
 *   @param unsignedchar (boardNum): Board number to use
 *
-*   @note assumes this isn't DQLA
+*   @note Outputs a message when the value read by the methods are 
+*   different and some statistics along the way and at the end
 *
 *   @return none
 ****************************************************************/
@@ -486,12 +452,9 @@ void ReadSameRegisterTest(BasePort *portone, BasePort *porttwo, unsigned char bo
 }
 
 /****************************************************************
-*   @brief: This function tests for glitches when writing and
+*   @brief This function tests for glitches when writing and
 *   reading using different communication methods but to the
 *   same register
-*  
-*   @details: Outputs a message when the value written and read are 
-*   different and some statistics along the way and at the end
 *
 *   @param BasePort     (*portone): First communication interface object 
 *                                   that provides access to the physical 
@@ -501,6 +464,8 @@ void ReadSameRegisterTest(BasePort *portone, BasePort *porttwo, unsigned char bo
 *                                   connection to the controller boards   
 *   @param unsignedchar (boardNum): Board number to use
 *
+*   @note Outputs a message when the value written and read are 
+*   different and some statistics along the way and at the end
 *   @note assumes the encoder preload in channel 1 exists (offset 4) for
 *   the given board
 *   @note accounts for reading and writing failures by not evaluating cases
@@ -563,6 +528,8 @@ void WriteAndReadOneRegisterDifferentMethodsTest(BasePort *portone, BasePort *po
 *                                   connection to the controller boards   
 *   @param unsignedchar (boardNum): Board number to use
 *
+*   @note Outputs a message when the value written and read are 
+*   different and some statistics along the way and at the end
 *   @note assumes the encoder preload in channel 1 exists (offset 4) for
 *   the given board
 *   @note accounts for reading and writing failures by not evaluating cases
@@ -615,11 +582,13 @@ void WriteAndReadOneRegisterDifferentMethodsStressTest(BasePort *portone, BasePo
     }
 }
 
+// good notes until ehre confirmed!!!
+
 /****************************************************************
-*   @brief: tests that two communication methods can read the status 
+*   @brief tests that two communication methods can read the status 
 *   register at the same time 
 *
-*   @details: ensures safety relay and power are on before looping
+*   @details ensures safety relay and power are on before looping
 *   having two different ports read the status at very close times 
 *   and then comparing their results, which is an attempt to isolate 
 *   for glitches caused exclusively by quick read with different 
@@ -633,10 +602,12 @@ void WriteAndReadOneRegisterDifferentMethodsStressTest(BasePort *portone, BasePo
 *                                   connection to the controller boards   
 *   @param unsignedchar (boardNum): Board number to use
 *
-*   @note: this test does not gaurentee anything except that reading
+*   @note Outputs a message when the values read are not the expected values
+*   and some statistics along the way and at the end
+*   @note this test does not gaurentee anything except that reading
 *   alone at the same time does not cause issues. Any other circumstances
 *   may change the results
-*   @note: this test does track how many times the actual attempt to read
+*   @note this test does track how many times the actual attempt to read
 *   also fails (i.e. a call to ReadQuadlet returns false), which may
 *   indicate trouble with reading at the same time as well.
 *
@@ -699,10 +670,10 @@ void ReadDifferentThingsDifferentMethodsTest(BasePort *portone, BasePort *porttw
 }
 
 /****************************************************************
-*   @brief: tests that two communication methods can write to enable the
+*   @brief tests that two communication methods can write to enable the
 *   safety relay and power at similar times
 *
-*   @details: ensures safety relay and power are off each time before 
+*   @details ensures safety relay and power are off each time before 
 *   looping and having two different ports write at very close times,
 *   waiting, and then reading, which is an attempt to isolate for glitches
 *   caused exclusively by quick writes with different methods    
@@ -715,7 +686,9 @@ void ReadDifferentThingsDifferentMethodsTest(BasePort *portone, BasePort *porttw
 *                                   connection to the controller boards   
 *   @param unsignedchar (boardNum): Board number to use
 *
-*   @note: this test does track how many times the actual attempt to write
+*   @note Outputs a message when the values read are not the expected values
+*   and some statistics along the way and at the end
+*   @note this test does track how many times the actual attempt to write
 *   also fails (i.e. a call to WriteQuadlet returns false), which may
 *   indicate trouble with writing at the same time as well.
 *
@@ -809,6 +782,8 @@ void WriteDifferentThingsDifferentMethodsTest(BasePort *portone, BasePort *portt
 *                                   connection to the controller boards   
 *   @param unsignedchar (boardNum): Board number to use
 *
+*   @note Outputs a message when the values read do not match the written
+*   values and some statistics along the way and at the end
 *   @note: this test does track how many times the actual attempt to write
 *   also fails (i.e. a call to WriteQuadlet returns false), which may
 *   indicate trouble with writing at the same time as well.
@@ -929,6 +904,8 @@ void WriteThenReadDifferentThingsDifferentMethodsTest(BasePort *portone, BasePor
 *                                   connection to the controller boards   
 *   @param unsignedchar (boardNum): Board number to use
 *
+*   @note Outputs a message when the value written and read are 
+*   not the expected values
 *   @note: this test does track how many times the actual attempt to write
 *   also fails (i.e. a call to WriteQuadlet returns false), which may
 *   indicate trouble with writing at the same time as well.
@@ -1162,6 +1139,8 @@ void RapidReadWriteReadDifferentThingsDifferentMethodsTest(BasePort *portone, Ba
 *                                   connection to the controller boards   
 *   @param unsignedchar (boardNum): Board number to use
 *
+*   @note Outputs a message when the value written and read are 
+*   different and some statistics along the way and at the end
 *   @note: this test does track how many times the actual attempt to write
 *   also fails (i.e. a call to WriteQuadlet returns false), which may
 *   indicate trouble with writing at the same time as well.
@@ -1381,8 +1360,7 @@ void WaveformReadAndWriteDifferentMethodsTest(BasePort *portone, BasePort *portt
     }
 }
 
-AmpIO *SelectBoard(const std::string &portName, const std::vector<AmpIO *> &boardList, AmpIO *curBoard)
-{
+AmpIO *SelectBoard(const std::string &portName, const std::vector<AmpIO *> &boardList, AmpIO *curBoard) {
     AmpIO *newBoard = curBoard;
     if (boardList.size() > 1) {
         size_t i;
@@ -1409,456 +1387,6 @@ AmpIO *SelectBoard(const std::string &portName, const std::vector<AmpIO *> &boar
     return newBoard;
 }
 
-void TestDacRW(BasePort *port, unsigned char boardNum)
-{
-    size_t i;
-    quadlet_t write_block[6];
-
-    size_t i0 = 0;
-    size_t numQuads = 5;
-    unsigned long fver = port->GetFirmwareVersion(boardNum);
-    if (fver > 7) {
-        i0 = 1;
-        numQuads = 6;
-    }
-
-    // Read from DAC (quadlet reads), modify values, write them using
-    // a block write.
-    for (i = 0; i < 4; i++) {
-        nodeaddr_t addr = 0x0001 | ((i+1) << 4);  // channel 1-4, DAC Control
-        write_block[i0+i] = 0;
-        if (!port->ReadQuadlet(boardNum, addr, write_block[i0+i]))
-            std::cout << "Failed to read quadlet for channel " << (i+1) << std::endl;
-        write_block[i0+i] &= 0x0000ffff;
-    }
-    std::cout << "Read from DAC: " << std::hex << write_block[i0+0] << ", "
-              << write_block[i0+1] << ", " << write_block[i0+2] << ", "
-              << write_block[i0+3] << std::endl;
-    if (fver > 7) {
-        write_block[0] = bswap_32(static_cast<quadlet_t>((boardNum << 8) | numQuads));
-    }
-    for (i = 0; i < 4; i++) {
-        write_block[i0+i] = bswap_32(VALID_BIT | (write_block[i0+i]+static_cast<quadlet_t>(i+1)*0x100));
-        if (fver < 8)
-            write_block[i0+i] |= (boardNum<<24);
-    }
-    write_block[numQuads-1] = 0;   // power control
-    std::cout << "Setting new values" << std::endl;
-    if (!port->WriteBlock(boardNum, 0, write_block, numQuads*sizeof(quadlet_t)))
-        std::cout << "Failed to write block data" << std::endl;
-}
-
-void  WriteAllBoardsTest(BasePort *port, const std::vector<AmpIO *> &boardList)
-{
-    std::cout << "Protocol: " << port->GetProtocol() << std::endl;
-    for (unsigned int j = 0; j < boardList.size(); j++) {
-        boardList[j]->WritePowerEnable(true);
-        boardList[j]->SetAmpEnableMask(0x0f, 0x0f);
-        boardList[j]->SetSafetyRelay(true);
-        for (int axis = 0; axis < 4; axis++)
-            boardList[j]->SetMotorCurrent(axis, 0x8000+16*boardList[j]->GetBoardId()+axis);
-    }
-    port->WriteAllBoards();
-}
-
-void  ContinuousReadTest(BasePort *port, unsigned char boardNum)
-{
-    bool done = false;
-    quadlet_t read_data;
-    //char buf[5] = "QLA1";
-    char buf[5] = "1ALQ";
-    size_t success = 0;
-    size_t readFailures = 0;
-    size_t compareFailures = 0;
-    unsigned long count = 0;
-
-    while (!done) {
-        count++;
-        read_data = 0;
-        if (!port->ReadQuadlet(boardNum, 4, read_data))
-            readFailures++;
-        else {
-            if (memcmp((void *)&read_data, buf, 4) == 0)
-                success++;
-            else
-                compareFailures++;
-        }
-        if (readFailures + compareFailures > 5) done = true;
-        if (count >= 10000) done = true;
-
-        // print status
-        if (count % 1000 == 0) {
-            std::cout << "Success = " << std::dec << success << ", read failures = " << readFailures << ", compare failures = "
-                      << compareFailures << std::endl;
-        }
-    }
-    if (count % 1000 != 0) {
-        std::cout << "Success = " << std::dec << success << ", read failures = " << readFailures << ", compare failures = "
-                  << compareFailures << std::endl;
-    }
-}
-
-void  ContinuousWriteTest(BasePort *port, unsigned char boardNum)
-{
-    bool done = false;
-    quadlet_t read_data;
-    size_t success = 0;
-    size_t writeFailures = 0;
-    size_t readFailures = 0;
-    size_t compareFailures = 0;
-    quadlet_t write_data = 0x0;
-    int count = 0;
-    nodeaddr_t regnum = 0x14;  // Channel 1 preload (was 0x0F for REG_DEBUG)
-
-    while (!done) {
-        read_data = -1;
-        write_data++;
-        count++;
-        if (!port->WriteQuadlet(boardNum, regnum, write_data))
-            writeFailures++;
-        else {
-            Amp1394_Sleep(50*1e-6);  // sleep 50 us
-            if (port->ReadQuadlet(boardNum, regnum, read_data)) {
-                if (memcmp((void *)&read_data, (void *)&write_data, 4) == 0)
-                    success++;
-                else {
-                    compareFailures++;
-                    std::cout << std::hex << "write_data = 0x" << write_data << "  " << " read_data = 0x" << read_data << std::endl;
-                }
-            }
-            else {
-                readFailures++;
-            }
-        }
-        if (writeFailures + readFailures + compareFailures > 200) done = true;
-
-        if (count % 1000 == 0) {
-            std::cout << "Success = " << std::dec << success << ", write failures = " << writeFailures
-                      << ", read failures = " << readFailures
-                      << ", compare failures = " << compareFailures << std::endl;
-        }
-
-        if (count >= 10000) {
-            done = true;
-            std::cout << "end write_data = 0x" << std::hex << write_data << "\n";
-        }
-    }
-}
-
-
-bool PrintFirewirePHY(AmpIO *board)
-{
-    unsigned char data;
-    if (!board->ReadFirewirePhy(0, data))
-        return false;
-    std::cout << "Node: " << ((data >> 2) & 0x3f);
-    if (data & 0x02) std::cout << " (root)";
-    if (data & 0x01) std::cout << " (power)";
-    std::cout << std::endl;
-    if (!board->ReadFirewirePhy(1, data))
-        return false;
-    std::cout << "Gap count = " << (data & 0x3f) << " (default = 63)" << std::endl;
-    // Registers 2-3 contain known values, so we can just check them
-    if (!board->ReadFirewirePhy(2, data))
-        return false;
-    unsigned int num_ports = data & 0x1f;
-    if (num_ports != 2) {
-        std::cout << "Unexpected num_ports " << num_ports << " (should be 2)" << std::endl;
-        return false;
-    }
-    bool extended = ((data & 0xe0) == 0xe0);
-    if (!extended) {
-        std::cout << "Should have extended register set" << std::endl;
-        return false;
-    }
-    // Read register 3 for speed and repeater delay
-    if (!board->ReadFirewirePhy(3, data))
-        return false;
-    // Speed codes:
-    //   000 (0)  100 MBits
-    //   001 (1)  200 MBits
-    //   010 (2)  400 Mbits
-    // Other values are reserved or for speeds not supported by 1394a
-    unsigned short speed = (data >> 5) & 0x07;
-    if (speed != 2) {
-        std::cout << "Unexpected speed " << speed
-                  << " (should be 2 for 400 MBits)" << std::endl;
-        return false;
-    }
-    unsigned short repeater_delay = data & 0x0f;
-    if (repeater_delay != 0) {
-        std::cout << "Unexpected repeater_delay " << repeater_delay
-                  << " (should be 0)" << std::endl;
-        return false;
-    }
-    std::cout << "All queried register data is correct" << std::endl;
-    return true;
-}
-
-bool RunTiming(const std::string &portName, AmpIO *boardTest, EthBasePort *ethPort, const std::string &msgType, size_t numIter = 1000)
-{
-    size_t i;
-    EthBasePort::TCODE msgCode;
-    if (msgType == "quadlet read")
-        msgCode = EthBasePort::QREAD;
-    else if (msgType == "quadlet write")
-        msgCode = EthBasePort::QWRITE;
-    else {
-        std::cout << "Unsupported message type: " << msgType << std::endl;
-        return false;
-    }
-    std::cout << "Measuring " << portName << " " << msgType << " time (" << std::dec << numIter << " iterations)" << std::endl;
-    double timeSum = 0.0;
-    double minTime = 1.0;   // one second should be much higher than expected readings
-    double maxTime = 0.0;
-    double minTimeReceive = 1.0;
-    double maxTimeReceive = 0.0;
-    double minTimeSend = 1.0;
-    double maxTimeSend = 0.0;
-    for (i = 0; i < numIter; i++) {
-        double startTime, deltaTime = 0;
-        uint32_t status;
-        if (msgCode == EthBasePort::QREAD) {
-            startTime = Amp1394_GetTime();
-            status = boardTest->ReadStatus();
-            deltaTime = Amp1394_GetTime()-startTime;
-            int boardNum = (status&0x0f000000)>>24;
-            if (boardNum != boardTest->GetBoardId()) {
-                std::cout << "   Iteration " << i << ": board number mismatch, read=" << boardNum
-                          << ", expected=" << static_cast<unsigned int>(boardTest->GetBoardId()) << std::endl;
-                break;
-            }
-        }
-        else if (msgCode == EthBasePort::QWRITE) {
-            startTime = Amp1394_GetTime();
-            status = boardTest->WriteWatchdogPeriod(0);
-            deltaTime = Amp1394_GetTime()-startTime;
-        }
-        timeSum += deltaTime;
-        if (deltaTime < minTime)
-            minTime = deltaTime;
-        if (deltaTime > maxTime)
-            maxTime = deltaTime;
-        if (ethPort) {
-            // Get Ethernet timing (from FPGA)
-            // Note that timeSend is a little short because it does not include the time
-            // to send the last few bytes of the packet.
-            double timeReceive = ethPort->GetFpgaReceiveTime();
-            double timeSend = ethPort->GetFpgaTotalTime() - timeReceive;
-            if (timeReceive < minTimeReceive)
-                minTimeReceive = timeReceive;
-            if (timeReceive > maxTimeReceive)
-                maxTimeReceive = timeReceive;
-            if (timeSend < minTimeSend)
-                minTimeSend = timeSend;
-            if (timeSend > maxTimeSend)
-                maxTimeSend = timeSend;
-        }
-    }
-    if (i > 0) {
-        std::cout << "   Times (us), " << i << " iterations: mean = " << std::fixed << std::setprecision(2)
-                  << (1.0e6*timeSum/i) << ", min = " << (1.0e6*minTime) << ", max = " << (1.0e6*maxTime) << std::endl;
-        if (ethPort) {
-            std::cout << "      FPGA receive min/max (us) = " << (1.0e6*minTimeReceive) << "/" << (1.0e6*maxTimeReceive);
-            if (msgType == "quadlet read")
-                std::cout << ", send min/max (us) = " << (1.0e6*minTimeSend) << "/" << (1.0e6*maxTimeSend);
-            std::cout << std::endl;
-        }
-    }
-    return true;
-}
-
-void TestBlockWrite(unsigned int wlen_max, AmpIO *wboard, AmpIO *rboard)
-{
-    quadlet_t waveform[MAX_POSSIBLE_DATA_SIZE/sizeof(quadlet_t)];
-    quadlet_t waveform_read[MAX_POSSIBLE_DATA_SIZE/sizeof(quadlet_t)];
-    unsigned int i;
-    unsigned int min_left = wlen_max;
-    unsigned int min_wlen = wlen_max;
-    unsigned int max_wait = 0;
-    unsigned int max_wlen = wlen_max;
-    unsigned int numSilentMismatch = 0;
-
-    // Get FPGA Version
-    unsigned int fpgaVer = rboard->GetFpgaVersionMajor();
-    if ((fpgaVer < 2) || (fpgaVer > 3)) {
-        std::cout << "TestBlockWrite: unsupported FPGA Version: " << fpgaVer << std::endl;
-        return;
-    }
-
-    // Check if debug data available, in which case we can query bw_left
-    unsigned int debugVersion = 0;
-    if (rboard->ReadEthernetData(waveform_read, 0x80, 16)) {
-        char *cptr = reinterpret_cast<char *>(waveform_read);
-        if (strncmp(cptr, "DBG2", 4) == 0) {
-            debugVersion = 2;
-        }
-        else {
-            std::cout << "Debug data not available" << std::endl;
-            std::cout << "Will only perform read/write test" << std::endl;
-        }
-    }
-
-    for (unsigned int wlen = 2; wlen < wlen_max; wlen++) {
-        bool doOut = ((wlen<10)||(wlen%20 == 0)||(wlen==wlen_max-1));
-        unsigned int len16 = 2*wlen;  // length in words
-        double trigger;               // actual trigger value
-        unsigned int trigger_comp;    // trigger computation on FPGA
-        if (fpgaVer == 2) {
-            trigger_comp = 10 + len16/2+len16/8-len16/64 + 2; // FPGA V2 (KSZ8851)
-            trigger = (3*wlen-2)/5.0;
-        }
-        else {
-            trigger_comp = 10 + len16/2 + 2;   // FPGA V3 (RTL8211F)
-            trigger = (wlen-1)/2.0;
-        }
-        if (doOut) {
-            std::cout << "Len=" << std::dec << wlen << ": ";
-            if (debugVersion) {
-                std::cout << "trigger = " << trigger
-                          << ", trigger_fpga = " << (trigger_comp-10)/2 << ", ";
-            }
-        }
-        for (i = 0; i < wlen; i++) {
-            waveform[i] = ((wlen+i)<< 16) | (wlen-i);
-            waveform_read[i] = 0;
-        }
-        if (!wboard->WriteWaveformTable(waveform, 0, wlen)) {
-            if (!doOut) std::cout << "Len=" << std::dec << wlen << ": ";
-            std::cout << "WriteWaveformTable failed" << std::endl;
-            return;
-        }
-        Amp1394_Sleep(0.05);
-        if (debugVersion) {
-            // Read 16 quadlets to get EthernetIO debug data (0x80-0x8f)
-            if (!rboard->ReadEthernetData(waveform_read, 0x80, 16))
-                break;
-            // Read next 5 quadlets to get low-level debug data:
-            // KSZ (0x90) or RTI (0x4a0)
-            if (!rboard->ReadEthernetData(&waveform_read[16], (fpgaVer == 2) ? 0x90 : 0x4a0, 5))
-                break;
-            unsigned short bw_left = 0;
-            unsigned short bw_wait = 0;
-            unsigned int bw_err_cnt = 0;
-            bw_left = static_cast<unsigned short>(waveform_read[8]>>16);
-            bool bw_err = (waveform_read[8] & 0x00008000);
-            if (bw_err) {
-                bw_err_cnt++;
-            }
-            // For both KSZ and RTI, bw_wait is upper word of DebugData[4]
-            bw_wait = static_cast<unsigned short>(waveform_read[20]>>16);
-            if (bw_left < min_left) {
-                min_left = bw_left;
-                min_wlen = wlen;
-            }
-            if (bw_wait > max_wait) {
-                max_wait = bw_wait;
-                max_wlen = wlen;
-            }
-            if (doOut) {
-                std::cout << "bw_left = " << bw_left << ", bw_wait = " << bw_wait;
-                if (bw_err_cnt > 0) {
-                    std::cout << ", bw_err_cnt = " << bw_err_cnt;
-                    bw_err_cnt = 0;
-                }
-                std::cout << ", ";
-            }
-        }
-        if (!rboard->ReadWaveformTable(waveform_read, 0, wlen)) {
-            if (!doOut) std::cout << "Len=" << std::dec << wlen << ": ";
-            std::cout << "ReadWaveformTable failed" << std::endl;
-            break;
-        }
-        bool allOK = true;
-        for (i = 0; i < wlen; i++) {
-            if (waveform_read[i] != waveform[i]) {
-                allOK = false;
-                if (doOut) {
-                    std::cout << "mismatch at quadlet " << std::dec << i << ", read "
-                              << std::hex << waveform_read[i] << ", expected " << waveform[i];
-                    if (numSilentMismatch > 0) {
-                        std::cout << std::endl << "There were " << std::dec << numSilentMismatch
-                                  << " additional lengths with mismatches";
-                        numSilentMismatch = 0;
-                    }
-                }
-                else
-                    numSilentMismatch++;
-                break;
-            }
-        }
-        if (doOut) {
-            if (!debugVersion && allOK) std::cout << " Pass";
-            std::cout << std::endl;
-        }
-    }
-    if (numSilentMismatch > 0) {
-        std::cout << "There were " << numSilentMismatch << " additional lengths with mismatches" << std::endl;
-    }
-    if (debugVersion) {
-        std::cout << "Mininum bw_left = " << std::dec << min_left << " at wlen = " << min_wlen << std::endl;
-        std::cout << "Maximum bw_wait = " << std::dec << max_wait << " at wlen = " << max_wlen << std::endl;
-    }
-}
-
-void TestWaveform(AmpIO *board, size_t numReads = 1)
-{
-    const unsigned int WLEN = 256;
-    quadlet_t waveform[WLEN];
-    quadlet_t waveform_read[WLEN];
-    size_t i;
-    // Set up square waves that change every 1 msec
-    double clkPer = board->GetFPGAClockPeriod();
-    uint32_t numTicks = static_cast<uint32_t>(0.001/clkPer);
-    std::cout << "Setting waveform with " << numTicks << " counts (1 msec edges)" << std::endl;
-    if ((numTicks&0x7fffff) != numTicks)
-        std::cout << "Warning: numTicks does not fit in 23 bits" << std::endl;
-    unsigned char dout1 = 0;
-    unsigned char dout2 = 0;
-    unsigned char dout3 = 0;
-    unsigned char dout4 = 0;
-    for (i = 0; i < WLEN-1; i++) {
-        if (i%4 == 0) dout1 = 1-dout1;
-        if (i%4 == 1) dout2 = 1-dout2;
-        if (i%4 == 2) dout3 = 1-dout3;
-        if (i%4 == 3) dout4 = 1-dout4;
-        waveform[i] = 0x80000000 | (numTicks << 8) | (dout4 << 3) | (dout3 << 2) | (dout2 << 1) | dout1;
-        waveform_read[i] = 0;
-    }
-    waveform[WLEN-1] = 0;
-    waveform_read[WLEN-1] = 0;
-    std::cout << "Writing test pattern" << std::endl;
-    if (!board->WriteWaveformTable(waveform, 0, WLEN)) {
-        std::cout << "WriteWaveformTable failed" << std::endl;
-        return;
-    }
-    Amp1394_Sleep(0.05);
-    for (size_t n = 0; n < numReads; n++) {
-        std::cout << "Reading data";
-        if (numReads > 1)
-            std::cout << ": iteration " << n;
-        std::cout << std::endl;
-        if (!board->ReadWaveformTable(waveform_read, 0, WLEN)) {
-            std::cout << "ReadWaveformTable failed" << std::endl;
-            return;
-        }
-        for (i = 0; i < WLEN; i++) {
-            if (waveform_read[i] != waveform[i]) {
-                std::cout << "Mismatch at quadlet " << i << ", read " << std::hex
-                          << waveform_read[i] << ", expected " << waveform[i]
-                          << std::dec << std::endl;
-                return;
-            }
-        }
-        std::cout << "Pattern verified!" << std::endl;
-    }
-#if 0
-    // Following code will actually generate waveform on DOUT lines
-    board->WriteDigitalOutput(0x0f,0x00);
-    // Start waveform on all DOUT channels
-    board->WriteWaveformControl(0x0f, 0x0f);
-#endif
-}
 
 // Following prints feedback from the MAX7317 I/O Expander on QLA Rev 1.5+
 // Feedback from the MAX7301 I/O Expander on DQLA is a little different
@@ -1873,138 +1401,6 @@ void PrintIOExp(uint32_t iodata)
     if (iodata&0x08000000) std::cout << " reg_io_read";
     if (iodata&0x10000000) std::cout << " other_busy";
     std::cout << std::dec << std::endl;
-}
-
-// Following checks the configuration of MAX7317 I/O Expander on QLA Rev 1.5+
-// (channel 0)
-bool QLA_IOExp_Check(AmpIO &Board, unsigned long chan = 0)
-{
-    // TODO: update for non-zero channels (DQLA)
-    uint32_t iodata;
-    Board.WriteIOExpander(0x1345);   // Write 0x45 to RAM
-    Board.WriteIOExpander(0x9300);   // Read from RAM
-    Board.ReadIOExpander(iodata);
-    std::cout << "Read from RAM (45): ";
-    PrintIOExp(iodata);
-    Board.WriteIOExpander(0x1300);   // Write 0x00 to RAM
-    Board.WriteIOExpander(0x9300);   // Read from RAM
-    std::cout << "Read from RAM (00): ";
-    Board.ReadIOExpander(iodata);
-    PrintIOExp(iodata);
-    Board.WriteIOExpander(0x13ff);   // Write 0xff to RAM
-    Board.WriteIOExpander(0x9300);   // Read from RAM
-    Board.ReadIOExpander(iodata);
-    std::cout << "Read from RAM (ff): ";
-    PrintIOExp(iodata);
-    for (int i = 0; i < 10; i++) {
-        uint32_t cmd = 0x8000 | (i << 8);
-        Board.WriteIOExpander(cmd);   // Read Port i status
-        Board.ReadIOExpander(iodata);
-        std::cout << "Read from Port " << i << ": ";
-        PrintIOExp(iodata);
-    }
-    Board.WriteIOExpander(0x8e00);   // Read Ports 0-7
-    Board.ReadIOExpander(iodata);
-    std::cout << "Read from Ports 0-7: ";
-    PrintIOExp(iodata);
-    Board.WriteIOExpander(0x8f00);   // Read Ports 8-9
-    Board.ReadIOExpander(iodata);
-    std::cout << "Read from Ports 8-9: ";
-    PrintIOExp(iodata);
-    Board.WriteIOExpander(0x40000000);   // Select debug register
-    Board.ReadIOExpander(iodata);
-    std::cout << "outputs = " << std::hex << iodata << std::dec << std::endl;
-    Board.WriteIOExpander(0xc0000000);   // Clear errors, select debug register
-    Board.ReadIOExpander(iodata);
-    std::cout << "outputs = " << std::hex << iodata << std::dec << std::endl;
-    return true;
-}
-
-// Following checks the configuration of one of MAX7301 I/O Expanders on the DQLA
-bool DQLA_IOExp_Check(AmpIO &Board, unsigned long chan)
-{
-    uint32_t iodata;
-    unsigned int DQLA_Num = (chan == 3) ? 1 : 2;
-    chan <<= 16;
-    Board.WriteIOExpander(chan|0x08000000);     // NOP command to set channel for reading
-    Board.ReadIOExpander(iodata);
-    std::cout << "Checking DQLA I/O Expander " << DQLA_Num << " ..." << std::endl;
-    if (iodata&0x00400000) {
-        std::cout << "Error: not configured" << std::endl;
-        return false;
-    }
-    if (iodata&0x00800000) {
-        std::cout << "Error: failed to initialize" << std::endl;
-        return false;
-    }
-    if (iodata&0x02000000) {
-        std::cout << "Warning: read error detected" << std::endl;
-    }
-    // Check config commands: IOP[7:4], IOP[11:8], IOP[15:12], ...
-    uint16_t configCmd[8] = {  0x09ff, 0x0aff, 0x0b55, 0x0c57, 0x0dff, 0x0eff, 0x0f55, 0x0401 };
-    for (unsigned int j = 0; j < sizeof(configCmd)/sizeof(uint16_t); j++) {
-        uint16_t readCmd = (configCmd[j]&0xff00)|0x8000;
-        std::cout << "Checking config cmd " << j << ": " << std::hex << readCmd << std::dec << std::endl;
-        unsigned int cnt;
-        for (cnt = 0; cnt < 100; cnt++) {
-            Board.WriteIOExpander(chan|readCmd);            // Read config
-            Board.ReadIOExpander(iodata);
-            if (iodata&0x04000000) {
-                std::cout << "  Warning: register I/O still in process" << std::endl;
-            }
-            if (iodata&0x08000000) {
-                std::cout << "  Warning: still waiting for register read data" << std::endl;
-            }
-            if ((iodata&0x0000ff00) == (readCmd&0x0000ff00))
-                break;
-        }
-        if (cnt == 100) {
-            std::cout << "  Warning: command mismatch, received: " << std::hex << (iodata&0x0000ff00)
-                      << std::dec <<std::endl;
-            continue;
-        }
-        else if (cnt > 0) {
-            std::cout << "  Warning: took " << cnt << " attempts to obtain correct response" << std::endl;
-        }
-        if (iodata&0x01000000) {
-            std::cout << "  Warning: output error detected (" << std::hex << ((iodata&0x001f0000)>>16)
-                      << std::dec << ") " << std::endl;
-        }
-        if (iodata&0x10000000) {
-            std::cout << "  Warning:  register I/O error (command ignored because previous not finished)" << std::endl;
-        }
-        else if ((iodata&0x000000ff) != (configCmd[j]&0x00ff)) {
-            std::cout << "  Warning: configuration mismatch, received: " << std::hex << (iodata&0x000000ff)
-                      << " (should be " << (configCmd[j]&0x00ff) << ")" << std::dec << std::endl;
-        }
-        else {
-            std::cout << "  Configuration verified" << std::endl;
-        }
-    }
-    Board.WriteIOExpander(chan|0x40000000);    // Select debug register
-    Board.ReadIOExpander(iodata);
-    unsigned int num_output_errors = (iodata&0x00ff0000)>>16;
-    std::cout << "Debug register, number of output errors: " << num_output_errors << std::endl;
-    if (iodata&0x02000000) {
-        std::cout << "Warning: read_error detected" << std::endl;
-    }
-    if ((num_output_errors > 0) || (iodata&0x02000000)) {
-        std::cout << "Clearing errors" << std::endl;
-        Board.WriteIOExpander(chan|0x80000000);   // Clear errors (deselect debug)
-    }
-    return true;
- }
-
-static char QuadletReadCallbackBoardId = 0;
-
-bool QuadletReadCallback(EthBasePort &, unsigned char boardId, std::ostream &debugStream)
-{
-    if ((QuadletReadCallbackBoardId != boardId) && (boardId != 0xff)) {
-        debugStream << "Warning: QuadletReadCallback called for board " << (unsigned int) boardId
-                    << ", expected board " << (unsigned int) QuadletReadCallbackBoardId << std::endl;
-        return false;
-    }
-    return true;
 }
 
 int main(int argc, char **argv) {
@@ -2289,21 +1685,7 @@ int main(int argc, char **argv) {
                 std::cout << "Write data = 0x" << std::hex << write_data << "\n";
             break;
 
-        case '2':   // Read request from PC (note that QuadletReadCallback is called)
-            read_data = 0;
-            addr = 0x04;  // Return QLA1
-            if (curPort->ReadQuadlet(curBoardNum, addr, read_data)) {
-                std::cout << "Read quadlet data: " << std::hex << read_data << std::endl;
-                memcpy(buf, (char *)(&read_data), 4);
-                buf[4] = 0;
-                std::cout << "  as string: " << buf << std::endl;
-                if (curPort == EthPort) {
-                    std::cout << "FPGA Recv time (us): " << EthPort->GetFpgaReceiveTime()*1.0e6
-                              << ", FPGA Total time (us): " << EthPort->GetFpgaTotalTime()*1.0e6 << std::endl;
-                }
-            }
-            else
-                std::cout << "Failed to read quadlet via " << curPortString << " port" << std::endl;
+        case '2':  
             break;
 
         case '3':
@@ -2330,17 +1712,9 @@ int main(int argc, char **argv) {
             break;
 
         case '4':
-            TestDacRW(curPort, curBoardNum);
             break;
 
         case '5':
-            if (fpga_ver == 2) {
-                PrintEthernetPhyStatusV2(*curBoard);
-            }
-            else if (fpga_ver == 3) {
-                PrintEthernetPhyStatusV3(*curBoard, 1);
-                PrintEthernetPhyStatusV3(*curBoard, 2);
-            }
             break;
 
         case '6':
@@ -2373,37 +1747,9 @@ int main(int argc, char **argv) {
             break;
 
         case 'a':
-            if (curPort == FwPort)
-                WriteAllBoardsTest(curPort, FwBoardList);
-            else
-                WriteAllBoardsTest(curPort, EthBoardList);
             break;
 
         case 'B':
-            if (curBoardEth && curBoardFw && (EthBoardNum == FwBoardNum)) {
-                unsigned int wlen_max_eth = (EthPort->GetMaxWriteDataSize()/sizeof(quadlet_t));
-                unsigned int wlen_max_fw = (FwPort->GetMaxWriteDataSize()/sizeof(quadlet_t));
-                unsigned int wlen_max = std::min(wlen_max_eth, wlen_max_fw);
-                if (curBoard == curBoardEth) {
-                    std::cout << "Write via " << EthPortString << ", read via " << FwPortString << std::endl;
-                    TestBlockWrite(wlen_max, curBoardEth, curBoardFw);
-                }
-                else {
-                    std::cout << std::endl
-                              <<"Write via " << FwPortString << ", read via " << EthPortString << std::endl;
-                    TestBlockWrite(wlen_max, curBoardFw, curBoardEth);
-                }
-            }
-            else if (curBoard == curBoardFw) {
-                unsigned int wlen_max = (FwPort->GetMaxWriteDataSize()/sizeof(quadlet_t));
-                std::cout << "Testing via " << FwPortString << std::endl;
-                TestBlockWrite(wlen_max, curBoardFw, curBoardFw);
-            }
-            else if (curBoard == curBoardEth) {
-                unsigned int wlen_max = (EthPort->GetMaxWriteDataSize()/sizeof(quadlet_t));
-                std::cout << "Testing via " << EthPortString << std::endl;
-                TestBlockWrite(wlen_max, curBoardEth, curBoardEth);
-            }
             break;
 
         case 'b':
@@ -2414,14 +1760,12 @@ int main(int argc, char **argv) {
             break;
 
         case 'c':
-            ContinuousReadTest(curPort, curBoardNum);
             break;
 
         case 'C':
             break;
 
         case 'd':
-            ContinuousWriteTest(curPort, curBoardNum);
             break;
 
         case 'e':
@@ -2441,9 +1785,6 @@ int main(int argc, char **argv) {
             break;
 
         case 'f':
-            std::cout << "Firewire PHY data (board "
-                      << static_cast<unsigned int>(curBoardNum) << "):" << std::endl;
-            PrintFirewirePHY(curBoard);
             break;
 
         case 'i':
@@ -2458,18 +1799,6 @@ int main(int argc, char **argv) {
             break;
 
         case 'm':   // TEST I/O EXPANDER
-            if (curBoard->GetHardwareVersion() == DQLA_String) {
-                DQLA_IOExp_Check(*curBoard, 3);
-                DQLA_IOExp_Check(*curBoard, 4);
-                // Could also test I/O expanders on QLA Rev 1.5+
-                // In DQLA systems, need to use channels 1 and 2
-                // QLA_IOExp_Check(*curBoard, 1);
-                // QLA_IOExp_Check(*curBoard, 2);
-            }
-            else {
-                // Test I/O expander on QLA Rev 1.5+ (channel 0)
-                QLA_IOExp_Check(*curBoard);
-            }
             break;
 
         case 'p':    // Select Ethernet or Firewire/Zynq-EMIO
@@ -2497,14 +1826,6 @@ int main(int argc, char **argv) {
             break;
 
         case 't':
-            if (EthPort && (curBoardNum == EthBoardNum)) {
-                RunTiming(curPortString, curBoard, EthPort, "quadlet read");
-                RunTiming(curPortString, curBoard, EthPort, "quadlet write");
-            }
-            else {
-                RunTiming(curPortString, curBoard, 0, "quadlet read");
-                RunTiming(curPortString, curBoard, 0, "quadlet write");
-            }
             break;
 
         case 'v':
@@ -2521,7 +1842,6 @@ int main(int argc, char **argv) {
             break;
 
         case 'w':
-            TestWaveform(curBoard, 10);
             break;
 
         case 'x':
