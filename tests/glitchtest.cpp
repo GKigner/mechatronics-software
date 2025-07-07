@@ -1388,21 +1388,6 @@ AmpIO *SelectBoard(const std::string &portName, const std::vector<AmpIO *> &boar
 }
 
 
-// Following prints feedback from the MAX7317 I/O Expander on QLA Rev 1.5+
-// Feedback from the MAX7301 I/O Expander on DQLA is a little different
-void PrintIOExp(uint32_t iodata)
-{
-    std::cout << std::hex << (iodata&0x0000ffff) << "  :";
-    bool output_error = iodata&0x01000000;
-    if (output_error)
-        std::cout << " output_error (" << ((iodata&0x00ff0000)>>16) << ") ";
-    if (iodata&0x02000000) std::cout << " read_error";
-    if (iodata&0x04000000) std::cout << " do_reg_io";
-    if (iodata&0x08000000) std::cout << " reg_io_read";
-    if (iodata&0x10000000) std::cout << " other_busy";
-    std::cout << std::dec << std::endl;
-}
-
 int main(int argc, char **argv) {
     bool useEthernet = true;
     BasePort::PortType desiredPort = BasePort::PORT_ETH_UDP;
@@ -1461,6 +1446,7 @@ int main(int argc, char **argv) {
 
     BasePort *FwPort = 0;    // Firewire port
     BasePort *ZyncPort = 0;    // Zynq-EMIO port
+    EthBasePort *EthPort = 0;  // Ethernet port
 
     std::string EthPortString;
     std::string FwPortString;
@@ -1517,7 +1503,6 @@ int main(int argc, char **argv) {
     unsigned int fpga_ver = curBoard->GetFpgaVersionMajor();
 
     // setup ethernet
-    EthBasePort *EthPort = 0;
     if (useEthernet) {
         if (desiredPort == BasePort::PORT_ETH_UDP) {
             std::cout << "Creating Ethernet UDP port, IP address = " << IPaddr << std::endl;
@@ -1580,6 +1565,18 @@ int main(int argc, char **argv) {
     quadlet_t write_data = 0L;
     quadlet_t buffer[128];
 
+    std::cout << std::endl << "Glitch Test Program" << std::endl;
+    std::cout << "Ports availible: \n";
+    if (usingEth) {
+        std::cout << EthPortString << "\n"
+    } 
+    if (usingFW) {
+        std::cout << FwPortString << "\n"
+    } 
+    if (usingZync) {
+        std::cout << ZyncPortString << "\n"
+    } 
+    
     while (!done) {
         unsigned char curBoardNum = curBoard->GetBoardId();
         unsigned char EthBoardNum = 0;
@@ -1588,8 +1585,8 @@ int main(int argc, char **argv) {
         unsigned int fpga_ver = curBoard->GetFpgaVersionMajor();
         double clkPeriod = curBoard->GetFPGAClockPeriod();
 
-        std::cout << std::endl << "Glitch Test Program" << std::endl;
-        if (curBoardFw) {
+
+/*      if (curBoardFw) {
             FwBoardNum = curBoardFw->GetBoardId();
             std::cout << "  " << FwPortString << " board: "
                       << static_cast<unsigned int>(FwBoardNum);
@@ -1597,6 +1594,7 @@ int main(int argc, char **argv) {
                 std::cout << "  <-- active";
             std::cout << std::endl;
         }
+
         if (curBoardZync) {
             ZyncBoardNum = curBoardZync->GetBoardId();
             std::cout << "  " << ZyncPortString << " board: "
@@ -1614,13 +1612,34 @@ int main(int argc, char **argv) {
                 std::cout << "  <-- active";
             std::cout << std::endl;
         }
+            */
 
         
         
 
         
+        std::cout << "-------------------------------------- Logistical Functions --------------------------------------\n";
+        std::cout << "  q) Quit \n";
+        std::cout << "  p) Ethernet status \n";
+        std::cout << "  b) Change board \n";
+        std::cout << "--------------------------------------    Test Functions    --------------------------------------\n";
+        std::cout << "  0) two commuications methods read; one register \n";
+        std::cout << "  1) one commuication method writes, one reads; one register \n";
+        std::cout << "  2) one commuication method writes, one reads; one register; stress test (both read correctly) \n";
+        std::cout << "  3) two commuication methods read status \n";
+        std::cout << "  4) two commuication methods write different things to status \n";
+        std::cout << "  5) two commuication methods write different things to status and then read status\n";
+        std::cout << "  6) two commuication methods read status and then write different things to status\n";
+        std::cout << "  7) two commuication methods read, then write different things, then read status\n";
+        std::cout << "  8) two commuication methods write different things, then read, then write different things to status\n";
+        std::cout << "  9) one communication method writes to waveform and one reads from waveform\n";
+        
 
-        std::cout << "  0) Quit" << std::endl;
+
+
+
+
+
         std::cout << "  1) Quadlet write (power/relay toggle) to board" << std::endl;
         std::cout << "  2) Quadlet read from board" << std::endl;
         std::cout << "  3) Block read from board" << std::endl;
