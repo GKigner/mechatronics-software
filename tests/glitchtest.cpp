@@ -308,16 +308,16 @@ bool InitFireWire(BasePort *&FwPort, std::vector<AmpIO *> &FwBoardList, int port
 *   If the port opens successfully the routine:
 *     1. Enables or disables verbose output according to *isVerbose*.
 *     2. Assigns the newly-created object to the caller-provided reference
-*        `ZyncPort`.
+*        `ZynqPort`.
 *     3. Queries node 0 (the only node on an EMIO link) for its board ID.
 *        When the ID is in the valid range, the function constructs an
 *        `AmpIO` handle for that board, registers it with the port, and
-*        appends the pointer to *ZyncBoardList*.
+*        appends the pointer to *ZynqBoardList*.
 *
-*   @param  BasePort *&        ZyncPort        Reference that receives the
+*   @param  BasePort *&        ZynqPort        Reference that receives the
 *                                              newly created `ZynqEmioPort`
 *                                              pointer on success
-*   @param  std::vector<AmpIO *>& ZyncBoardList
+*   @param  std::vector<AmpIO *>& ZynqBoardList
 *                                              Vector to which discovered
 *                                              `AmpIO` board objects are
 *                                              appended
@@ -333,31 +333,33 @@ bool InitFireWire(BasePort *&FwPort, std::vector<AmpIO *> &FwBoardList, int port
 *           *true*  — Port initialised (even if no board detected)  
 *           *false* — Port failed to open or EMIO support not available
 ****************************************************************/
-bool InitZync(BasePort *&ZyncPort, std::vector<AmpIO *> &ZyncBoardList, int port, bool isVerbose) {
+bool InitZynq(BasePort *&ZynqPort, std::vector<AmpIO *> &ZynqBoardList, int port, bool isVerbose) {
     #if Amp1394_HAS_EMIO
-        ZynqEmioPort *ZynqPort;
-        ZynqPort = new ZynqEmioPort(port, std::cout);
-        if (!ZynqPort->IsOK()) {
+        ZynqEmioPort *ZynqPortTemp;
+        ZynqPortTemp = new ZynqEmioPort(port, std::cout);
+        if (!ZynqPortTemp->IsOK()) {
             std::cout << "Failed to initialize Zynq EMIO port" << std::endl;
-            delete ZynqPort; 
+            delete ZynqPortTemp; 
+            ZynqPortTemp = nullptr;
             ZynqPort = nullptr;
             return false;
         }
-        ZynqPort->SetVerbose(isVerbose);
-        ZyncPort = ZynqPort;
+        ZynqPortTemp->SetVerbose(isVerbose);
+
+        ZynqPort = ZynqPortTemp;
         // Zynq EMIO port always has one node (0)
-        unsigned int bnum = ZyncPort->GetBoardId(0);
+        unsigned int bnum = ZynqPort->GetBoardId(0);
         if (bnum < BoardIO::MAX_BOARDS) {
             std::cout << "Found Zynq EMIO board: " << bnum << std::endl;
             AmpIO *board = new AmpIO(bnum);
-            ZyncPort->AddBoard(board);
-            ZyncBoardList.push_back(board);
+            ZynqPort->AddBoard(board);
+            ZynqBoardList.push_back(board);
         }
             return true;
     #else
          // Suppress unused parameter warning
-        (void)ZyncPort;    
-        (void)ZyncBoardList;
+        (void)ZynqPort;    
+        (void)ZynqBoardList;
         (void)port;        
         (void)isVerbose;
         return false;
@@ -2087,10 +2089,10 @@ bool SelectCommonBoard(const std::string &portNameOne, const std::string &portNa
     return false;
 }
 
-bool SelectPorts(bool usingZync, bool usingFW, bool usingEth, BasePort *&portUsingOne, BasePort *&portUsingTwo,
-    std::string EthPortString, std::string FwPortString, std::string ZyncPortString,  BasePort *FwPort, 
-    BasePort *ZyncPort, EthBasePort *EthPort, 
-    const std::vector<AmpIO *> &ZyncBoardList,  
+bool SelectPorts(bool usingZynq, bool usingFW, bool usingEth, BasePort *&portUsingOne, BasePort *&portUsingTwo,
+    std::string EthPortString, std::string FwPortString, std::string ZynqPortString,  BasePort *FwPort, 
+    BasePort *ZynqPort, EthBasePort *EthPort, 
+    const std::vector<AmpIO *> &ZynqBoardList,  
     const std::vector<AmpIO *> &FwBoardList,     
     const std::vector<AmpIO *> &EthBoardList,    
     std::vector<AmpIO *> &portUsingOneBoardList, 
@@ -2102,12 +2104,12 @@ bool SelectPorts(bool usingZync, bool usingFW, bool usingEth, BasePort *&portUsi
     if (usingFW) {
         std::cout << "2) " << FwPortString << "\n";
     } 
-    if (usingZync) {
-        std::cout << "3) " << ZyncPortString << "\n";
+    if (usingZynq) {
+        std::cout << "3) " << ZynqPortString << "\n";
     } 
 
     std::cout << "enter the two numbers of the ports next to each other to choose them \n";
-    std::cout << "Example: enter '13' and then a newline to choose ethernet as the first port and Zync as the second port\n";
+    std::cout << "Example: enter '13' and then a newline to choose ethernet as the first port and Zynq as the second port\n";
     std::string input;
     if (!std::getline(std::cin, input)) {
         std::cout << "\nEOF detected. Port selection failed." << std::endl;
@@ -2132,11 +2134,11 @@ bool SelectPorts(bool usingZync, bool usingFW, bool usingEth, BasePort *&portUsi
             return false;
         }
     } else if (input == "13") {
-        if (usingEth && usingZync) {
+        if (usingEth && usingZynq) {
             portUsingOne = EthPort;
-            portUsingTwo = ZyncPort;
+            portUsingTwo = ZynqPort;
             portUsingOneBoardList = EthBoardList;
-            portUsingTwoBoardList = ZyncBoardList;
+            portUsingTwoBoardList = ZynqBoardList;
             return true;
         } else {
             return false;
@@ -2152,30 +2154,30 @@ bool SelectPorts(bool usingZync, bool usingFW, bool usingEth, BasePort *&portUsi
             return false;
         }
     } else if (input == "23") {
-        if (usingFW && usingZync) {
+        if (usingFW && usingZynq) {
             portUsingOne = FwPort;
-            portUsingTwo = ZyncPort;
+            portUsingTwo = ZynqPort;
             portUsingOneBoardList = FwBoardList;
-            portUsingTwoBoardList = ZyncBoardList;
+            portUsingTwoBoardList = ZynqBoardList;
             return true;
         } else {
             return false;
         }
     } else if (input == "31") {
-        if (usingZync && usingEth) {
-            portUsingOne = ZyncPort;
+        if (usingZynq && usingEth) {
+            portUsingOne = ZynqPort;
             portUsingTwo = EthPort;
-            portUsingOneBoardList = ZyncBoardList;
+            portUsingOneBoardList = ZynqBoardList;
             portUsingTwoBoardList = EthBoardList;
             return true;
         } else {
             return false;
         }
     } else if (input == "32") {
-        if (usingZync && usingFW) {
-            portUsingOne = ZyncPort;
+        if (usingZynq && usingFW) {
+            portUsingOne = ZynqPort;
             portUsingTwo = FwPort;
-            portUsingOneBoardList = ZyncBoardList;
+            portUsingOneBoardList = ZynqBoardList;
             portUsingTwoBoardList = FwBoardList;
             return true;
         } else {
@@ -2190,8 +2192,9 @@ bool isValidConfig(bool validPorts, bool validBoard) {
     return validPorts && validBoard;
 }
 
-void ListBoardsAndPorts(bool usingZync, bool usingFW, bool usingEth, std::string EthPortString, std::string FwPortString, 
-    std::string ZyncPortString, const std::vector<AmpIO *> &ZyncBoardList, const std::vector<AmpIO *> &FwBoardList,     
+// before next commit recognize misspelling of zynq
+void ListBoardsAndPorts(bool usingZynq, bool usingFW, bool usingEth, std::string EthPortString, std::string FwPortString, 
+    std::string ZynqPortString, const std::vector<AmpIO *> &ZynqBoardList, const std::vector<AmpIO *> &FwBoardList,     
     const std::vector<AmpIO *> &EthBoardList) {
         if (usingEth) {
             std::cout << EthPortString << " is availible as an Ethernet Port\n";
@@ -2217,12 +2220,12 @@ void ListBoardsAndPorts(bool usingZync, bool usingFW, bool usingEth, std::string
             std::cout << std::dec << "\n";
         }
 
-        if (usingZync) {
-            std::cout << ZyncPortString << " is availible as a Zync Port\n";
-            std::cout << "Availible boards on this Zync Port: ";
-            for (size_t i = 0; i < ZyncBoardList.size(); i++) {
-                std::cout << std::hex << static_cast<unsigned int>(ZyncBoardList[i]->GetBoardId());
-                if (i < ZyncBoardList.size() - 1) {
+        if (usingZynq) {
+            std::cout << ZynqPortString << " is availible as a Zynq Port\n";
+            std::cout << "Availible boards on this Zynq Port: ";
+            for (size_t i = 0; i < ZynqBoardList.size(); i++) {
+                std::cout << std::hex << static_cast<unsigned int>(ZynqBoardList[i]->GetBoardId());
+                if (i < ZynqBoardList.size() - 1) {
                     std::cout << ", ";
                 }
             }   
@@ -2275,29 +2278,29 @@ int main(int argc, char **argv) {
     ComputeMulticastHash(UdpMulticastMAC, RegAddr, RegData);
     std::cout << "UDP Multicast hash table: register " << std::hex << (int)RegAddr << ", data = " << RegData << std::endl;
 
-    std::vector<AmpIO *> ZyncBoardList;
+    std::vector<AmpIO *> ZynqBoardList;
     std::vector<AmpIO *> FwBoardList;
     std::vector<AmpIO *> EthBoardList;
 
     AmpIO *curBoard = 0;     // Current board via Ethernet or Firewire / Zynq-EMIO
     AmpIO *curBoardFw = 0;   // Current board via Firewire / Zynq-EMIO, sets boardNumFw
-    AmpIO *curBoardZync = 0;  // Current board via Zynq-EMIO
+    AmpIO *curBoardZynq = 0;  // Current board via Zynq-EMIO
     AmpIO *curBoardEth = 0;  // Current board via Ethernet, sets boardNumEth
 
     BasePort *curPort = 0;   // Current port (Ethernet, Firewire or Zynq-EMIO)
 
     BasePort *FwPort = 0;    // Firewire port
-    BasePort *ZyncPort = 0;    // Zynq-EMIO port
+    BasePort *ZynqPort = 0;    // Zynq-EMIO port
     EthBasePort *EthPort = 0;  // Ethernet port
 
     std::string EthPortString;
     std::string FwPortString;
-    std::string ZyncPortString;
+    std::string ZynqPortString;
     std::string curPortString;
 
-    // set up firewire and/or zync
+    // set up firewire and/or Zynq
     bool usingFW = false;
-    bool usingZync = false;
+    bool usingZynq = false;
     bool usingEth = false;
 
     if (InitFireWire(FwPort, FwBoardList, port)) {
@@ -2305,13 +2308,13 @@ int main(int argc, char **argv) {
         usingFW = true;
     } 
 
-    if (InitZync(ZyncPort, ZyncBoardList, port, isVerbose)) {
-        std::cout << "Zync Initialized \n";
-        usingZync = true;
+    if (InitZynq(ZynqPort, ZynqBoardList, port, isVerbose)) {
+        std::cout << "Zynq Initialized \n";
+        usingZynq = true;
     } 
 
-    if (!(usingFW || usingZync)) {
-        std::cout << "Failed to initialize both Zync and FireWire; need at least two ports for this test program \n";
+    if (!(usingFW || usingZynq)) {
+        std::cout << "Failed to initialize both Zynq and FireWire; need at least two ports for this test program \n";
         return -1;
     }
 
@@ -2324,23 +2327,23 @@ int main(int argc, char **argv) {
         curPortString = FwPortString;
     }
 
-    // set up Zync boards
-    if (usingZync && ZyncBoardList.size() > 0) {
-        curBoardZync = ZyncBoardList[0];
-        ZyncPortString = ZyncPort->GetPortTypeString();
-        curBoard = curBoardZync;
-        curPort = ZyncPort;
-        curPortString = ZyncPortString;
+    // set up Zynq boards
+    if (usingZynq && ZynqBoardList.size() > 0) {
+        curBoardZynq = ZynqBoardList[0];
+        ZynqPortString = ZynqPort->GetPortTypeString();
+        curBoard = curBoardZynq;
+        curPort = ZynqPort;
+        curPortString = ZynqPortString;
     }
 
     // ensure a board to setup ethernet
-    if (!curBoardZync && !curBoardFw) {
-        std::cout << "No current board for Zync and FireWire; failed to setup Zync and FireWire \n";
+    if (!curBoardZynq && !curBoardFw) {
+        std::cout << "No current board for Zynq and FireWire; failed to setup Zynq and FireWire \n";
         return -1;
-    } else if (!curBoard && !curBoardZync) {
+    } else if (!curBoard && !curBoardZynq) {
         curBoard = curBoardFw;
     } else if (!curBoard && !curBoardFw) {
-        curBoard = curBoardZync;
+        curBoard = curBoardZynq;
     }
     unsigned int fpga_ver = curBoard->GetFpgaVersionMajor();
 
@@ -2352,7 +2355,7 @@ int main(int argc, char **argv) {
         }
         if (!EthPort) {
             std::cout << "Failed to create Ethernet port" << std::endl;
-            if (!(usingFW && usingZync)) {
+            if (!(usingFW && usingZynq)) {
                 std::cout << "Only one port is active; need at least two ports for this porgram" << std::endl;
                 return -1;
             }
@@ -2370,7 +2373,7 @@ int main(int argc, char **argv) {
             if (EthBoardList.size() > 0) {
                 curBoardEth = EthBoardList[0];
             }
-            if (curPort == FwPort || curPort == ZyncPort) {
+            if (curPort == FwPort || curPort == ZynqPort) {
                 if (fpga_ver == 2) {
                     InitEthernet(*curBoard, 0);
                 } else if (fpga_ver == 3) {
@@ -2382,12 +2385,12 @@ int main(int argc, char **argv) {
             }
             usingEth = true;
         }
-    } else if (!(usingFW && usingZync)) {
+    } else if (!(usingFW && usingZynq)) {
         std::cout << "Only one port is active; need at least two ports for this porgram" << std::endl;
         return -1;
     }
 
-    if ((!curBoardEth) + (!curBoardFw) + (!curBoardZync) > 1) {
+    if ((!curBoardEth) + (!curBoardFw) + (!curBoardZynq) > 1) {
         std::cout << "Fewer than 2 boards found - exiting" << std::endl;
         return -1;
     }
@@ -2415,8 +2418,8 @@ int main(int argc, char **argv) {
     unsigned char curBoardNum = 0;
 
     std::cout << std::endl << "Glitch Test Program" << std::endl;
-    validPorts = SelectPorts(usingZync, usingFW, usingEth, portUsingOne, portUsingTwo, EthPortString, 
-                    FwPortString, ZyncPortString, FwPort, ZyncPort, EthPort, ZyncBoardList, FwBoardList,
+    validPorts = SelectPorts(usingZynq, usingFW, usingEth, portUsingOne, portUsingTwo, EthPortString, 
+                    FwPortString, ZynqPortString, FwPort, ZynqPort, EthPort, ZynqBoardList, FwBoardList,
                     EthBoardList, portUsingOneBoardList, portUsingTwoBoardList);
     if (portUsingOne && portUsingTwo) { // ensure not null
         std::cout << "Port one now selected to be " << portUsingOne->GetPortTypeString() << "\n";
@@ -2493,8 +2496,8 @@ int main(int argc, char **argv) {
             PrintEthernetStatus(*curBoard);
         } else if (input == "p") {
             std::cout << "Changing ports...\n";
-            validPorts = SelectPorts(usingZync, usingFW, usingEth, portUsingOne, portUsingTwo, EthPortString, 
-                    FwPortString, ZyncPortString, FwPort, ZyncPort, EthPort, ZyncBoardList, FwBoardList,
+            validPorts = SelectPorts(usingZynq, usingFW, usingEth, portUsingOne, portUsingTwo, EthPortString, 
+                    FwPortString, ZynqPortString, FwPort, ZynqPort, EthPort, ZynqBoardList, FwBoardList,
                     EthBoardList, portUsingOneBoardList, portUsingTwoBoardList);
                     if (portUsingOne && portUsingTwo) { // ensure not null
                         std::cout << "Port one now selected to be " << portUsingOne->GetPortTypeString() << "\n";
@@ -2532,7 +2535,7 @@ int main(int argc, char **argv) {
             }
         } else if (input == "l") {
             if (portUsingOne && portUsingTwo) { // ensure not null pointers
-                ListBoardsAndPorts(usingZync, usingFW, usingEth, EthPortString, FwPortString, ZyncPortString, ZyncBoardList, FwBoardList, EthBoardList);
+                ListBoardsAndPorts(usingZynq, usingFW, usingEth, EthPortString, FwPortString, ZynqPortString, ZynqBoardList, FwBoardList, EthBoardList);
             }
         } else if (input == "0") {
             if (isValidConfig(validPorts, validBoard)) {
@@ -2674,12 +2677,12 @@ int main(int argc, char **argv) {
     }
 
     // Clean up Zynq port and boards
-    if (ZyncPort) {
-        for (unsigned int bd = 0; bd < ZyncBoardList.size(); bd++) {
-            ZyncPort->RemoveBoard(ZyncBoardList[bd]->GetBoardId());
-            delete ZyncBoardList[bd];
+    if (ZynqPort) {
+        for (unsigned int bd = 0; bd < ZynqBoardList.size(); bd++) {
+            ZynqPort->RemoveBoard(ZynqBoardList[bd]->GetBoardId());
+            delete ZynqBoardList[bd];
         }
-        delete ZyncPort;
+        delete ZynqPort;
     }
 
     // Clean up Ethernet port and boards
