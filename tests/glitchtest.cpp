@@ -29,54 +29,15 @@
 #include "MotorVoltage.h"
 #include "BasePort.h"
 
-const uint32_t VALID_BIT        = 0x80000000;  /*!< High bit of 32-bit word */
-const uint32_t DAC_MASK         = 0x0000ffff;  /*!< Mask for 16-bit DAC values */
 const uint32_t PWR_ENABLE_MASK  = 0x00080000;  /*!< Power enable mask (write only) */
 const uint32_t PWR_ENABLE_BIT   = 0x00040000;  /*!< Power enable status (read/write) */
 const uint32_t PWR_ENABLE       = PWR_ENABLE_MASK|PWR_ENABLE_BIT;
 const uint32_t PWR_DISABLE      = PWR_ENABLE_MASK;
-const uint32_t RELAY_FB         = 0x00020000;  /*!< Safety relay feedback (read only), 0 for DQLA */
 const uint32_t RELAY_MASK       = 0x00020000;  /*!< Safety relay enable mask (write only) */
 const uint32_t RELAY_BIT        = 0x00010000;  /*!< Safety relay enable (read/write) */
 const uint32_t RELAY_ON         = RELAY_MASK|RELAY_BIT;
 const uint32_t RELAY_OFF        = RELAY_MASK;
 
-
-// CRC16-CCIT (also called CRC-ITU)
-const uint16_t crc16_table[256] = {
-	0x0000, 0x1021, 0x2042, 0x3063, 0x4084, 0x50a5, 0x60c6, 0x70e7,
-	0x8108, 0x9129, 0xa14a, 0xb16b, 0xc18c, 0xd1ad, 0xe1ce, 0xf1ef,
-	0x1231, 0x0210, 0x3273, 0x2252, 0x52b5, 0x4294, 0x72f7, 0x62d6,
-	0x9339, 0x8318, 0xb37b, 0xa35a, 0xd3bd, 0xc39c, 0xf3ff, 0xe3de,
-	0x2462, 0x3443, 0x0420, 0x1401, 0x64e6, 0x74c7, 0x44a4, 0x5485,
-	0xa56a, 0xb54b, 0x8528, 0x9509, 0xe5ee, 0xf5cf, 0xc5ac, 0xd58d,
-	0x3653, 0x2672, 0x1611, 0x0630, 0x76d7, 0x66f6, 0x5695, 0x46b4,
-	0xb75b, 0xa77a, 0x9719, 0x8738, 0xf7df, 0xe7fe, 0xd79d, 0xc7bc,
-	0x48c4, 0x58e5, 0x6886, 0x78a7, 0x0840, 0x1861, 0x2802, 0x3823,
-	0xc9cc, 0xd9ed, 0xe98e, 0xf9af, 0x8948, 0x9969, 0xa90a, 0xb92b,
-	0x5af5, 0x4ad4, 0x7ab7, 0x6a96, 0x1a71, 0x0a50, 0x3a33, 0x2a12,
-	0xdbfd, 0xcbdc, 0xfbbf, 0xeb9e, 0x9b79, 0x8b58, 0xbb3b, 0xab1a,
-	0x6ca6, 0x7c87, 0x4ce4, 0x5cc5, 0x2c22, 0x3c03, 0x0c60, 0x1c41,
-	0xedae, 0xfd8f, 0xcdec, 0xddcd, 0xad2a, 0xbd0b, 0x8d68, 0x9d49,
-	0x7e97, 0x6eb6, 0x5ed5, 0x4ef4, 0x3e13, 0x2e32, 0x1e51, 0x0e70,
-	0xff9f, 0xefbe, 0xdfdd, 0xcffc, 0xbf1b, 0xaf3a, 0x9f59, 0x8f78,
-	0x9188, 0x81a9, 0xb1ca, 0xa1eb, 0xd10c, 0xc12d, 0xf14e, 0xe16f,
-	0x1080, 0x00a1, 0x30c2, 0x20e3, 0x5004, 0x4025, 0x7046, 0x6067,
-	0x83b9, 0x9398, 0xa3fb, 0xb3da, 0xc33d, 0xd31c, 0xe37f, 0xf35e,
-	0x02b1, 0x1290, 0x22f3, 0x32d2, 0x4235, 0x5214, 0x6277, 0x7256,
-	0xb5ea, 0xa5cb, 0x95a8, 0x8589, 0xf56e, 0xe54f, 0xd52c, 0xc50d,
-	0x34e2, 0x24c3, 0x14a0, 0x0481, 0x7466, 0x6447, 0x5424, 0x4405,
-	0xa7db, 0xb7fa, 0x8799, 0x97b8, 0xe75f, 0xf77e, 0xc71d, 0xd73c,
-	0x26d3, 0x36f2, 0x0691, 0x16b0, 0x6657, 0x7676, 0x4615, 0x5634,
-	0xd94c, 0xc96d, 0xf90e, 0xe92f, 0x99c8, 0x89e9, 0xb98a, 0xa9ab,
-	0x5844, 0x4865, 0x7806, 0x6827, 0x18c0, 0x08e1, 0x3882, 0x28a3,
-	0xcb7d, 0xdb5c, 0xeb3f, 0xfb1e, 0x8bf9, 0x9bd8, 0xabbb, 0xbb9a,
-	0x4a75, 0x5a54, 0x6a37, 0x7a16, 0x0af1, 0x1ad0, 0x2ab3, 0x3a92,
-	0xfd2e, 0xed0f, 0xdd6c, 0xcd4d, 0xbdaa, 0xad8b, 0x9de8, 0x8dc9,
-	0x7c26, 0x6c07, 0x5c64, 0x4c45, 0x3ca2, 0x2c83, 0x1ce0, 0x0cc1,
-	0xef1f, 0xff3e, 0xcf5d, 0xdf7c, 0xaf9b, 0xbfba, 0x8fd9, 0x9ff8,
-	0x6e17, 0x7e36, 0x4e55, 0x5e74, 0x2e93, 0x3eb2, 0x0ed1, 0x1ef0
-};
 
 uint32_t KSZ8851CRC(const unsigned char *data, size_t len)
 {
@@ -250,7 +211,6 @@ bool InitEthernet(AmpIO &Board, unsigned int eth_port) {
         std::cout << "   No Ethernet in FPGA V" << fpga_ver << std::endl;
         return false;
     }
-    PrintEthernetStatus(Board);
 
     // Reset the board
     Board.WriteEthernetPhyReset(eth_port);
@@ -262,6 +222,7 @@ bool InitEthernet(AmpIO &Board, unsigned int eth_port) {
         // Wait 500 msec
         Amp1394_Sleep(0.5);
     }
+    PrintEthernetStatus(Board);
 
     // Read the status
     uint32_t status;
@@ -320,6 +281,8 @@ bool InitFireWire(BasePort *&FwPort, std::vector<AmpIO *> &FwBoardList, int port
         FwPort = new FirewirePort(port, std::cout);
         if (!FwPort->IsOK()) {
             std::cout << "Failed to initialize firewire port" << std::endl;
+            delete FwPort; 
+            FwPort = nullptr;
             return false;
         }
         for (unsigned int bnum = 0; bnum < BoardIO::MAX_BOARDS; bnum++) {
@@ -376,6 +339,8 @@ bool InitZync(BasePort *&ZyncPort, std::vector<AmpIO *> &ZyncBoardList, int port
         ZynqPort = new ZynqEmioPort(port, std::cout);
         if (!ZynqPort->IsOK()) {
             std::cout << "Failed to initialize Zynq EMIO port" << std::endl;
+            delete ZynqPort; 
+            ZynqPort = nullptr;
             return false;
         }
         ZynqPort->SetVerbose(isVerbose);
@@ -390,6 +355,11 @@ bool InitZync(BasePort *&ZyncPort, std::vector<AmpIO *> &ZyncBoardList, int port
         }
             return true;
     #else
+         // Suppress unused parameter warning
+        (void)ZyncPort;    
+        (void)ZyncBoardList;
+        (void)port;        
+        (void)isVerbose;
         return false;
     #endif
 }
@@ -415,8 +385,6 @@ void ReadSameRegisterTest(BasePort *portone, BasePort *porttwo, unsigned char bo
     bool done = false;
     quadlet_t read_data_port_one;
     quadlet_t read_data_port_two;
-    //char buf[5] = "QLA1";
-    char buf[5] = "1ALQ";
     size_t success = 0;
     size_t compareFailures = 0;
     unsigned long count = 0;
@@ -800,7 +768,6 @@ void WriteThenReadDifferentThingsDifferentMethodsTest(BasePort *portone, BasePor
     int count = 0;
     bool iteration_success;
     size_t success = 0;
-    quadlet_t status_result;
     size_t compareReadFailuresPortOne = 0;
     size_t compareReadFailuresPortTwo = 0;
     std::string portOneString = portone->GetPortTypeString();
@@ -808,7 +775,6 @@ void WriteThenReadDifferentThingsDifferentMethodsTest(BasePort *portone, BasePor
     size_t failedQuadWrite = 0;
     quadlet_t status_result_one;
     quadlet_t status_result_two;
-    size_t compareFailures = 0;
     size_t failedQuadRead = 0;
     
     while (!done) {
@@ -922,9 +888,6 @@ void ReadThenWriteDifferentThingsDifferentMethodsTest(BasePort *portone, BasePor
     int count = 0;
     bool iteration_success;
     size_t success = 0;
-    quadlet_t status_result;
-    size_t compareReadFailuresPortOne = 0;
-    size_t compareReadFailuresPortTwo = 0;
     std::string portOneString = portone->GetPortTypeString();
     std::string portTwoString = porttwo->GetPortTypeString();
     size_t failedQuadWrite = 0;
@@ -932,7 +895,6 @@ void ReadThenWriteDifferentThingsDifferentMethodsTest(BasePort *portone, BasePor
     quadlet_t status_result_two_stage_one;
     quadlet_t status_result_stage_two;
     size_t compareFailuresIntial = 0;
-    size_t compareFailuresSecond = 0;
     size_t compareFailuresIntialVsSecond = 0;
     size_t failedQuadRead = 0;
     
@@ -1035,9 +997,6 @@ void RapidReadWriteReadDifferentThingsDifferentMethodsTest(BasePort *portone, Ba
     int count = 0;
     bool iteration_success;
     size_t success = 0;
-    quadlet_t status_result;
-    size_t compareReadFailuresPortOne = 0;
-    size_t compareReadFailuresPortTwo = 0;
     std::string portOneString = portone->GetPortTypeString();
     std::string portTwoString = porttwo->GetPortTypeString();
     size_t failedQuadWrite = 0;
@@ -1157,9 +1116,6 @@ void RapidWriteReadWriteDifferentThingsDifferentMethodsTest(BasePort *portone, B
     int count = 0;
     bool iteration_success;
     size_t success = 0;
-    quadlet_t status_result;
-    size_t compareReadFailuresPortOne = 0;
-    size_t compareReadFailuresPortTwo = 0;
     std::string portOneString = portone->GetPortTypeString();
     std::string portTwoString = porttwo->GetPortTypeString();
     size_t failedQuadWrite = 0;
@@ -1368,11 +1324,9 @@ void ReadRegisterAndStatusTest(BasePort *portone, BasePort *porttwo, unsigned ch
     //char buf[5] = "QLA1";
     char buf[5] = "1ALQ";
     size_t success = 0;
-    size_t compareFailures = 0;
     size_t preload_incorrect = 0;
     size_t relay_incorrect = 0;
     size_t readFailures = 0;
-    size_t relay = 0;
     unsigned long count = 0;
     bool preload_correct_flag = false;
     bool relay_correct_flag = false;
@@ -1447,11 +1401,9 @@ void ReadRegisterWriteStatusTest(BasePort *portone, BasePort *porttwo, unsigned 
     //char buf[5] = "QLA1";
     char buf[5] = "1ALQ";
     size_t success = 0;
-    size_t compareFailures = 0;
     size_t preload_incorrect = 0;
     size_t relay_incorrect = 0;
     size_t instructionFailures = 0;
-    size_t relay = 0;
     unsigned long count = 0;
     bool preload_correct_flag = false;
     bool relay_correct_flag = false;
@@ -1539,14 +1491,10 @@ void WriteRegisterReadStatusTest(BasePort *portone, BasePort *porttwo, unsigned 
     quadlet_t read_data_port_two;
     nodeaddr_t regnum = 0x14; 
     quadlet_t write_data = 0x0;
-    //char buf[5] = "QLA1";
-    char buf[5] = "1ALQ";
     size_t success = 0;
-    size_t compareFailures = 0;
     size_t register_incorrect = 0;
     size_t relay_incorrect = 0;
     size_t instructionFailures = 0;
-    size_t relay = 0;
     unsigned long count = 0;
     bool register_correct_flag = false;
     bool relay_correct_flag = false;
@@ -1628,14 +1576,10 @@ void WriteRegisterWriteStatusTest(BasePort *portone, BasePort *porttwo, unsigned
     quadlet_t read_data_port_two;
     nodeaddr_t regnum = 0x14; 
     quadlet_t write_data = 0x0;
-    //char buf[5] = "QLA1";
-    char buf[5] = "1ALQ";
     size_t success = 0;
-    size_t compareFailures = 0;
     size_t register_incorrect = 0;
     size_t relay_incorrect = 0;
     size_t instructionFailures = 0;
-    size_t relay = 0;
     unsigned long count = 0;
     bool register_correct_flag = false;
     bool relay_correct_flag = false;
@@ -1722,14 +1666,11 @@ void ReadRegisterAndStatusStressTest(BasePort *portone, BasePort *porttwo, unsig
     //char buf[5] = "QLA1";
     char buf[5] = "1ALQ";
     size_t success = 0;
-    size_t compareFailures = 0;
     size_t preload_portone_failures = 0;
     size_t preload_porttwo_failures = 0;
     size_t relay_portone_failures = 0;
     size_t relay_porttwo_failures = 0;
-    size_t relay_incorrect = 0;
     size_t readFailures = 0;
-    size_t relay = 0;
     unsigned long count = 0;
     bool preload_correct_flag_first_read = false;
     bool relay_correct_flag_first_read = false;
@@ -1840,24 +1781,15 @@ void WriteRegisterAndStatusStressTest(BasePort *portone, BasePort *porttwo, unsi
     bool done = false;
     quadlet_t register_read;
     quadlet_t status_read;
-    quadlet_t read_data_port_one_second_read;
-    quadlet_t read_data_port_two_second_read;
     //char buf[5] = "QLA1";
     nodeaddr_t regnum = 0x14; 
     quadlet_t write_data = 0x0;
     quadlet_t write_data_adj = write_data+1;
     size_t success = 0;
-    size_t compareFailures = 0;
-    size_t preload_portone_failures = 0;
-    size_t preload_porttwo_failures = 0;
-    size_t relay_portone_failures = 0;
-    size_t relay_porttwo_failures = 0;
     size_t relay_failures = 0;
     size_t power_failures = 0;
     size_t register_failures = 0;
-    size_t relay_incorrect = 0;
     size_t instructionFailures = 0;
-    size_t relay = 0;
     unsigned long count = 0;
     bool register_correct_flag = false;
     bool relay_correct_flag = false;
@@ -1963,35 +1895,16 @@ void WriteRegisterAndStatusStressTest(BasePort *portone, BasePort *porttwo, unsi
 
 void AlternatingReadAndWriteRegisterAndStatusStressTest(BasePort *portone, BasePort *porttwo, unsigned char boardNum){
     bool done = false;
-    quadlet_t read_data_port_one_first_read;
-    quadlet_t read_data_port_two_first_read;
-    quadlet_t read_data_port_one_second_read;
-    quadlet_t read_data_port_two_second_read;
-    char buf[5] = "1ALQ";
     size_t success = 0;
-    size_t compareFailures = 0;
-    size_t preload_portone_failures = 0;
-    size_t preload_porttwo_failures = 0;
-    size_t relay_portone_failures = 0;
-    size_t relay_porttwo_failures = 0;
-    size_t relay_incorrect = 0;
-    size_t readFailures = 0;
     size_t power_failures = 0;
     size_t register_failures = 0;
     size_t relay_failures = 0;
     size_t instructionFailures = 0;
-    size_t relay = 0;
     unsigned long count = 0;
-    bool preload_correct_flag_first_read = false;
-    bool relay_correct_flag_first_read = false;
-    bool preload_correct_flag_second_read = false;
-    bool relay_correct_flag_second_read = false;
     bool register_correct_flag_first = false;
     bool register_correct_flag_second = false;
     bool relay_correct_flag = false;
     bool power_correct_flag = false;
-    quadlet_t register_read = -1;
-    quadlet_t status_read = -1;
     quadlet_t register_read_first;
     quadlet_t register_read_second;
     quadlet_t status_read_first;
@@ -2003,8 +1916,10 @@ void AlternatingReadAndWriteRegisterAndStatusStressTest(BasePort *portone, BaseP
     std::string portTwoString = porttwo->GetPortTypeString();
 
     while (!done) {
-        register_read = -1;
-        status_read = -1;
+        register_read_first = -1;
+        register_read_second = -1;
+        status_read_first = -1;
+        status_read_second = -1;
         register_correct_flag_first = false;
         register_correct_flag_second = false;
         relay_correct_flag = false;
@@ -2022,8 +1937,8 @@ void AlternatingReadAndWriteRegisterAndStatusStressTest(BasePort *portone, BaseP
         // check they everythign wrote and read correctly
         if (portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, PWR_ENABLE) && porttwo->WriteQuadlet(boardNum, regnum, write_data)
             && portone->ReadQuadlet(boardNum, regnum, register_read_first) && porttwo->ReadQuadlet(boardNum, BoardIO::BOARD_STATUS, status_read_first)
-            && porttwo->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, RELAY_ON) && portone->ReadQuadlet(boardNum, regnum, status_read_second)
-            && portone->WriteQuadlet(boardNum, regnum, (write_data_adj)) &&  porttwo->ReadQuadlet(boardNum, BoardIO::BOARD_STATUS, register_read_second)) {
+            && porttwo->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, RELAY_ON) && portone->ReadQuadlet(boardNum, regnum, register_read_second)
+            && portone->WriteQuadlet(boardNum, regnum, (write_data_adj)) &&  porttwo->ReadQuadlet(boardNum, BoardIO::BOARD_STATUS, status_read_second)) {
             // ensure register written correctly
             // note does not ensure that first didn't fail
             if (memcmp((void *)&register_read_first, &(write_data), 4) == 0) {
@@ -2100,10 +2015,9 @@ void AlternatingReadAndWriteRegisterAndStatusStressTest(BasePort *portone, BaseP
 
 bool SelectCommonBoard(const std::string &portNameOne, const std::string &portNameTwo,
                        const std::vector<AmpIO *> &boardListOne,
-                       const std::vector<AmpIO *> &boardListTwo, 
+                       const std::vector<AmpIO *> &boardListTwo,
                        AmpIO *&selectedBoardOne, AmpIO *&selectedBoardTwo,
                        unsigned char &curBoardNum) {
-    
     // Find common boards between the two lists
     std::vector<AmpIO *> commonBoardsOne;
     std::vector<AmpIO *> commonBoardsTwo;
@@ -2129,7 +2043,7 @@ bool SelectCommonBoard(const std::string &portNameOne, const std::string &portNa
         selectedBoardOne = commonBoardsOne[0];
         selectedBoardTwo = commonBoardsTwo[0];
         curBoardNum = static_cast<unsigned char>(commonBoardsOne[0]->GetBoardId());
-        std::cout << "Automatically selected common board: " << std::hex 
+        std::cout << "Automatically selected common board: " << std::hex
                   << static_cast<unsigned int>(commonBoardsOne[0]->GetBoardId()) << std::dec << std::endl;
         return true;
     }
@@ -2142,6 +2056,10 @@ bool SelectCommonBoard(const std::string &portNameOne, const std::string &portNa
     std::cout << std::dec << std::endl;
     
     int num = getchar();
+    if (num == EOF) {  // Check for EOF
+        std::cout << "\nEOF detected. Selection failed." << std::endl;
+        return false;
+    }
     if ((num >= '0') && (num <= '9')) num -= '0';
     else if ((num >= 'a') && (num <= 'f')) num = 10 + (num - 'a');
     else if ((num >= 'A') && (num <= 'F')) num = 10 + (num - 'A');
@@ -2158,7 +2076,7 @@ bool SelectCommonBoard(const std::string &portNameOne, const std::string &portNa
             selectedBoardOne = commonBoardsOne[i];
             selectedBoardTwo = commonBoardsTwo[i];
             curBoardNum = static_cast<unsigned char>(commonBoardsOne[i]->GetBoardId());
-            std::cout << "Selected common board: " << std::hex 
+            std::cout << "Selected common board: " << std::hex
                       << static_cast<unsigned int>(commonBoardsOne[i]->GetBoardId()) << std::dec << std::endl;
             return true;
         }
@@ -2171,8 +2089,11 @@ bool SelectCommonBoard(const std::string &portNameOne, const std::string &portNa
 
 bool SelectPorts(bool usingZync, bool usingFW, bool usingEth, BasePort *&portUsingOne, BasePort *&portUsingTwo,
     std::string EthPortString, std::string FwPortString, std::string ZyncPortString,  BasePort *FwPort, 
-    BasePort *ZyncPort, EthBasePort *EthPort, std::vector<AmpIO *> ZyncBoardList, std::vector<AmpIO *> FwBoardList,
-    std::vector<AmpIO *> EthBoardList, std::vector<AmpIO *> &portUsingOneBoardList, 
+    BasePort *ZyncPort, EthBasePort *EthPort, 
+    const std::vector<AmpIO *> &ZyncBoardList,  
+    const std::vector<AmpIO *> &FwBoardList,     
+    const std::vector<AmpIO *> &EthBoardList,    
+    std::vector<AmpIO *> &portUsingOneBoardList, 
     std::vector<AmpIO *> &portUsingTwoBoardList) {
     std::cout << "Ports availible: \n";
     if (usingEth) {
@@ -2188,9 +2109,18 @@ bool SelectPorts(bool usingZync, bool usingFW, bool usingEth, BasePort *&portUsi
     std::cout << "enter the two numbers of the ports next to each other to choose them \n";
     std::cout << "Example: enter '13' and then a newline to choose ethernet as the first port and Zync as the second port\n";
     std::string input;
-    std::getline(std::cin, input);
+    if (!std::getline(std::cin, input)) {
+        std::cout << "\nEOF detected. Port selection failed." << std::endl;
+        return false;
+    }
+
     input.erase(std::remove_if(input.begin(), input.end(), ::isspace), input.end());
     std::transform(input.begin(), input.end(), input.begin(), ::tolower);
+
+    if (input.empty()) {
+        std::cout << "No input provided. Port selection failed." << std::endl;
+        return false;
+    }
     if (input == "12") {
         if (usingEth && usingFW) {
             portUsingOne = EthPort;
@@ -2260,6 +2190,45 @@ bool isValidConfig(bool validPorts, bool validBoard) {
     return validPorts && validBoard;
 }
 
+void ListBoardsAndPorts(bool usingZync, bool usingFW, bool usingEth, std::string EthPortString, std::string FwPortString, 
+    std::string ZyncPortString, const std::vector<AmpIO *> &ZyncBoardList, const std::vector<AmpIO *> &FwBoardList,     
+    const std::vector<AmpIO *> &EthBoardList) {
+        if (usingEth) {
+            std::cout << EthPortString << " is availible as an Ethernet Port\n";
+            std::cout << "Availible boards on this Ethernet Port: ";
+            for (size_t i = 0; i < EthBoardList.size(); i++) {
+                std::cout << std::hex << static_cast<unsigned int>(EthBoardList[i]->GetBoardId());
+                if (i < EthBoardList.size() - 1) {
+                    std::cout << ", ";
+                }
+            }
+            std::cout << std::dec << "\n";
+        }
+
+        if (usingFW) {
+            std::cout << FwPortString << " is availible as a Firewire Port\n";
+            std::cout << "Availible boards on this Firewire Port: ";
+            for (size_t i = 0; i < FwBoardList.size(); i++) {
+                std::cout << std::hex << static_cast<unsigned int>(FwBoardList[i]->GetBoardId());
+                if (i < FwBoardList.size() - 1) {
+                    std::cout << ", ";
+                }
+            }
+            std::cout << std::dec << "\n";
+        }
+
+        if (usingZync) {
+            std::cout << ZyncPortString << " is availible as a Zync Port\n";
+            std::cout << "Availible boards on this Zync Port: ";
+            for (size_t i = 0; i < ZyncBoardList.size(); i++) {
+                std::cout << std::hex << static_cast<unsigned int>(ZyncBoardList[i]->GetBoardId());
+                if (i < ZyncBoardList.size() - 1) {
+                    std::cout << ", ";
+                }
+            }   
+            std::cout << std::dec << "\n";
+        }
+    }
 
 int main(int argc, char **argv) {
     bool useEthernet = true;
@@ -2423,6 +2392,7 @@ int main(int argc, char **argv) {
         return -1;
     }
 
+
 #ifndef _MSC_VER
     // Turn off buffered I/O for keyboard
     struct termios oldTerm, newTerm;
@@ -2434,9 +2404,6 @@ int main(int argc, char **argv) {
 #endif
 
     bool done = false;
-    quadlet_t read_data;
-    quadlet_t write_data = 0L;
-    quadlet_t buffer[128];
     BasePort *portUsingOne = 0;   // first port being used (Ethernet, Firewire or Zynq-EMIO)
     BasePort *portUsingTwo = 0;   // second port being used (Ethernet, Firewire or Zynq-EMIO)
     std::vector<AmpIO *> portUsingOneBoardList;
@@ -2451,8 +2418,10 @@ int main(int argc, char **argv) {
     validPorts = SelectPorts(usingZync, usingFW, usingEth, portUsingOne, portUsingTwo, EthPortString, 
                     FwPortString, ZyncPortString, FwPort, ZyncPort, EthPort, ZyncBoardList, FwBoardList,
                     EthBoardList, portUsingOneBoardList, portUsingTwoBoardList);
-    std::cout << "Port one now selected to be " << portUsingOne->GetPortTypeString() << "\n";
-    std::cout << "Port two now selected to be " << portUsingTwo->GetPortTypeString() << "\n";
+    if (portUsingOne && portUsingTwo) { // ensure not null
+        std::cout << "Port one now selected to be " << portUsingOne->GetPortTypeString() << "\n";
+        std::cout << "Port two now selected to be " << portUsingTwo->GetPortTypeString() << "\n";
+    }
     if (validPorts) {
         std::cout << "These are valid ports for use\n";
     } else {
@@ -2476,52 +2445,14 @@ int main(int argc, char **argv) {
     std::cout << "Fox example, only enter \"q\" or \"4\" or \"17\" and then a newline\n";
     
     std::string input;
-    while (!done) {
-        unsigned char EthBoardNum = 0;
-        unsigned char FwBoardNum = 0;
-        unsigned char ZyncBoardNum = 0;
-        unsigned int fpga_ver = curBoard->GetFpgaVersionMajor();
-        double clkPeriod = curBoard->GetFPGAClockPeriod();
-
-
-/*      if (curBoardFw) {
-            FwBoardNum = curBoardFw->GetBoardId();
-            std::cout << "  " << FwPortString << " board: "
-                      << static_cast<unsigned int>(FwBoardNum);
-            if (curPort == FwPort)
-                std::cout << "  <-- active";
-            std::cout << std::endl;
-        }
-
-        if (curBoardZync) {
-            ZyncBoardNum = curBoardZync->GetBoardId();
-            std::cout << "  " << ZyncPortString << " board: "
-                      << static_cast<unsigned int>(ZyncBoardNum);
-            if (curPort == ZyncPort)
-                std::cout << "  <-- active";
-            std::cout << std::endl;
-        }
-
-        if (curBoardEth) {
-            EthBoardNum = curBoardEth->GetBoardId();
-            std::cout << "  " << EthPortString << " board: "
-                      << static_cast<unsigned int>(EthBoardNum);
-            if (curPort == EthPort)
-                std::cout << "  <-- active";
-            std::cout << std::endl;
-        }
-            */
-
-        
-        
-
-        
+    while (!done) {        
         std::cout << "-------------------------------------- Logistical Functions --------------------------------------\n";
         std::cout << "  q) Quit \n";
         std::cout << "  s) Ethernet status \n";
         std::cout << "  p) Change ports \n";
         std::cout << "  b) Change board \n";
         std::cout << "  c) Current ports and board (and their validity for use) \n";
+        std::cout << "  l) list all ports and boards availible \n";
         std::cout << "--------------------------------------    Test Functions    --------------------------------------\n";
         std::cout << "  0) two commuications methods read; one register \n";
         std::cout << "  1) one commuication method writes, one reads; one register \n";
@@ -2542,9 +2473,17 @@ int main(int argc, char **argv) {
         std::cout << "  16) two communication methods write to and read from both status and register\n";
 
 
-        std::getline(std::cin, input);
+        if (!std::getline(std::cin, input)) {  // Check if getline failed
+            std::cout << "\nEOF detected. Exiting program.\n";
+            done = true;
+        }
+        
         input.erase(std::remove_if(input.begin(), input.end(), ::isspace), input.end());
         std::transform(input.begin(), input.end(), input.begin(), ::tolower);
+        if (input.empty()) {  // Handle empty input gracefully
+            std::cout << "Please enter a valid option.\n";
+            continue;
+        }
 
         if (input == "q") {
             std::cout << "Quitting program...\n";
@@ -2557,8 +2496,10 @@ int main(int argc, char **argv) {
             validPorts = SelectPorts(usingZync, usingFW, usingEth, portUsingOne, portUsingTwo, EthPortString, 
                     FwPortString, ZyncPortString, FwPort, ZyncPort, EthPort, ZyncBoardList, FwBoardList,
                     EthBoardList, portUsingOneBoardList, portUsingTwoBoardList);
-                    std::cout << "Port one now selected to be " << portUsingOne->GetPortTypeString() << "\n";
-                    std::cout << "Port two now selected to be " << portUsingTwo->GetPortTypeString() << "\n";
+                    if (portUsingOne && portUsingTwo) { // ensure not null
+                        std::cout << "Port one now selected to be " << portUsingOne->GetPortTypeString() << "\n";
+                        std::cout << "Port two now selected to be " << portUsingTwo->GetPortTypeString() << "\n";
+                    }
                     if (validPorts) {
                         std::cout << "These are valid ports for use\n";
                     } else {
@@ -2588,6 +2529,10 @@ int main(int argc, char **argv) {
                 std::cout << "This configuration is valid for use\n";
             } else {
                 std::cout << "This configuration is invalid for use\n";
+            }
+        } else if (input == "l") {
+            if (portUsingOne && portUsingTwo) { // ensure not null pointers
+                ListBoardsAndPorts(usingZync, usingFW, usingEth, EthPortString, FwPortString, ZyncPortString, ZyncBoardList, FwBoardList, EthBoardList);
             }
         } else if (input == "0") {
             if (isValidConfig(validPorts, validBoard)) {
