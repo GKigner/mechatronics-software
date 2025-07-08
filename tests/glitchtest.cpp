@@ -38,9 +38,18 @@ const uint32_t RELAY_BIT        = 0x00010000;  /*!< Safety relay enable (read/wr
 const uint32_t RELAY_ON         = RELAY_MASK|RELAY_BIT;
 const uint32_t RELAY_OFF        = RELAY_MASK;
 
-
-uint32_t KSZ8851CRC(const unsigned char *data, size_t len)
-{
+/****************************************************************
+*  @brief  Calculate CRC-32 checksum for KSZ8851 Ethernet controller.
+*
+*  @param   const unsigned char *data   Data buffer to calculate CRC for.
+*  @param   size_t              len     Length of data buffer in bytes.
+*
+*  @note    This function comes from fpgatest.cpp.
+*  @note    Uses polynomial 0x04c11db7 with initial value 0xffffffff.
+*
+*  @return  uint32_t 32-bit CRC checksum value
+****************************************************************/
+uint32_t KSZ8851CRC(const unsigned char *data, size_t len) {
     uint32_t crc = 0xffffffff;
     for (size_t i = 0; i < len; i++) {
         for (size_t j = 0; j < 8; j++) {
@@ -53,9 +62,23 @@ uint32_t KSZ8851CRC(const unsigned char *data, size_t len)
     return crc;
 }
 
-// Compute parameters to initialize multicast hash table
-void ComputeMulticastHash(unsigned char *MulticastMAC, uint8_t &regAddr, uint16_t &regData)
-{
+/****************************************************************
+*  @brief  Compute multicast hash table parameters for KSZ8851
+*          Ethernet controller.
+*
+*  @param   unsigned char *MulticastMAC  6-byte multicast MAC address.
+*  @param   uint8_t       &regAddr       Reference to receive hash table
+*                                        register address.
+*  @param   uint16_t      &regData       Reference to receive hash table
+*                                        register bit mask.
+*
+*  @note    This function comes from fpgatest.cpp.
+*  @note    Calculates CRC of MAC address and extracts register offset
+*           and bit position for hash table configuration.
+*
+*  @return  none
+****************************************************************/
+void ComputeMulticastHash(unsigned char *MulticastMAC, uint8_t &regAddr, uint16_t &regData) {
     uint32_t crc = KSZ8851CRC(MulticastMAC, 6);
     int regOffset = (crc >> 29) & 0x0006;  // first 2 bits of CRC (x2)
     int regBit = (crc >> 26) & 0x00F;      // next 4 bits of CRC
@@ -63,17 +86,41 @@ void ComputeMulticastHash(unsigned char *MulticastMAC, uint8_t &regAddr, uint16_
     regData = (1 << regBit);
 }
 
-// Ethernet status from FPGA register 12
-void PrintEthernetStatus(AmpIO &Board)
-{
+/****************************************************************
+*  @brief  Print Ethernet status information from FPGA register.
+*
+*  @param   AmpIO &Board    Board object interface for accessing
+*                           board-specific registers.
+*
+*  @note    This function comes from fpgatest.cpp.
+*  @note    Reads status from FPGA register 12 and displays formatted
+*           output using EthBasePort::PrintStatus.
+*
+*  @return  none
+****************************************************************/
+void PrintEthernetStatus(AmpIO &Board) {
     uint32_t status;
     if (Board.ReadEthernetStatus(status))
         EthBasePort::PrintStatus(std::cout, status);
 }
 
-// Check contents of KSZ8851 register
-bool CheckRegister(AmpIO &Board, uint8_t regNum, uint16_t mask, uint16_t value)
-{
+/****************************************************************
+*  @brief  Check KSZ8851 register contents against expected values.
+*
+*  @param   AmpIO    &Board    Board object interface for accessing
+*                              board-specific registers.
+*  @param   uint8_t  regNum    Register number to check.
+*  @param   uint16_t mask      Bit mask to apply before comparison.
+*  @param   uint16_t value     Expected value after masking.
+*
+*  @note    This function comes from fpgatest.cpp.
+*  @note    Logs register mismatches with actual vs expected values
+*           in hex format.
+*
+*  @return  bool that indicates if register contents match expected 
+*           value
+****************************************************************/
+bool CheckRegister(AmpIO &Board, uint8_t regNum, uint16_t mask, uint16_t value) {
     uint16_t reg;
     Board.ReadKSZ8851Reg(regNum, reg);
     if ((reg&mask) != value) {
@@ -84,9 +131,20 @@ bool CheckRegister(AmpIO &Board, uint8_t regNum, uint16_t mask, uint16_t value)
     return true;
 }
 
-// Check whether Ethernet initialized correctly
-bool CheckEthernetV2(AmpIO &Board)
-{
+/****************************************************************
+*  @brief  Verify KSZ8851 Ethernet controller registers are properly
+*          configured for operation.
+*
+*  @param   AmpIO &Board    Board object interface for accessing
+*                           board-specific registers.
+*
+*  @note    This function comes from fpgatest.cpp.
+*  @note    Checks MAC address, QMU settings, receive/transmit configuration,
+*           multicast hash table, and interrupt settings.
+*
+*  @return  bool that indicates if the all register checks passed
+****************************************************************/
+bool CheckEthernetV2(AmpIO &Board) {
     std::cout << "Checking --- start ---" << "\n";
     bool ret = true;
     ret &= CheckRegister(Board, 0x10, 0xfff0, 0x9400);  // MAC address low = 0x940n (n = board id)
@@ -110,8 +168,22 @@ bool CheckEthernetV2(AmpIO &Board)
     return ret;
 }
 
-bool CheckRTL8211F_RegIO(AmpIO &Board, unsigned int chan, unsigned int phyAddr)
-{
+/****************************************************************
+*  @brief  Test RTL8211F PHY register read/write functionality using
+*          walking bit pattern.
+*
+*  @param   AmpIO        &Board    Board object interface for accessing
+*                                  board-specific registers.
+*  @param   unsigned int chan      Ethernet channel number.
+*  @param   unsigned int phyAddr   PHY address for register access.
+*
+*  @note    This function comes from fpgatest.cpp.
+*  @note    Performs walking bit test on interrupt enable register and
+*           restores original values after testing.
+*
+*  @return  bool that indicates if register I/O test passed
+****************************************************************/
+bool CheckRTL8211F_RegIO(AmpIO &Board, unsigned int chan, unsigned int phyAddr) {
     uint16_t curPage;
     if (!Board.ReadRTL8211F_Register(chan, phyAddr, FpgaIO::RTL8211F_PAGSR, curPage)) {
         std::cout << "Failed to read PHY" << chan << " PAGSR" << std::endl;
@@ -148,8 +220,22 @@ bool CheckRTL8211F_RegIO(AmpIO &Board, unsigned int chan, unsigned int phyAddr)
     return allOK;
 }
 
-bool CheckEthernetV3(AmpIO &Board, unsigned int chan)
-{
+
+/****************************************************************
+*  @brief  Verify RTL8211F Ethernet PHY registers are properly
+*          configured and accessible.
+*
+*  @param   AmpIO        &Board    Board object interface for accessing
+*                                  board-specific registers.
+*  @param   unsigned int chan      Ethernet channel number to verify.
+*
+*  @note    This function comes from fpgatest.cpp.
+*  @note    Checks PHY ID registers, TX/RX delay settings, and GMII
+*           to RGMII core configuration.
+*
+*  @return  bool that indicates if PHY verification passed
+****************************************************************/
+bool CheckEthernetV3(AmpIO &Board, unsigned int chan) {
     unsigned int phyAddr = FpgaIO::PHY_RTL8211F;
 
     // Check Register I/O
@@ -199,7 +285,21 @@ bool CheckEthernetV3(AmpIO &Board, unsigned int chan)
     return (phyid1 == 0x001c) && (phyid2 == 0xc916);
 }
 
-// eth_port:  0 for FPGA V2, 1 or 2 for FPGA V3
+/****************************************************************
+*  @brief  Initialize an Ethernet communication port and configure
+*          the physical layer interface.
+*
+*  @param   AmpIO          &Board       Board object interface for accessing
+*                                       board-specific parameters and registers.
+*  @param   unsigned int   eth_port     Ethernet port number (0 for FPGA V2,
+*                                       1 or 2 for FPGA V3).
+*
+*  @note    Requires firmware version 5 or higher and FPGA version 2 or higher.
+*  @note    Performs PHY reset, status verification, and register validation
+*           specific to the FPGA version.
+*
+*  @return  bool that indicates if the initialization was successful
+****************************************************************/
 bool InitEthernet(AmpIO &Board, unsigned int eth_port) {
     if (Board.GetFirmwareVersion() < 5) {
         std::cout << "   No Ethernet controller, firmware version = " << Board.GetFirmwareVersion() << std::endl;
@@ -276,6 +376,26 @@ bool InitEthernet(AmpIO &Board, unsigned int eth_port) {
     return true;
 }
 
+/****************************************************************
+*  @brief  Initialize a FireWire communication port and discover
+*          connected boards.
+*
+*  @param   BasePort *&              FwPort        Reference that receives the
+*                                                  newly created FirewirePort
+*                                                  pointer on success.
+*  @param   std::vector<AmpIO *>&    FwBoardList   Vector to which discovered
+*                                                  AmpIO board objects are
+*                                                  appended.
+*  @param   int                      port          FireWire port number to
+*                                                  initialize.
+*
+*  @note    Compiled only when Amp1394_HAS_RAW1394 is defined, otherwise
+*           returns false.
+*  @note    Automatically discovers and registers all boards found on the
+*           FireWire bus.
+*
+*  @return  bool that indicates if the initialization was successful
+****************************************************************/
 bool InitFireWire(BasePort *&FwPort, std::vector<AmpIO *> &FwBoardList, int port) {
     #if Amp1394_HAS_RAW1394
         FwPort = new FirewirePort(port, std::cout);
@@ -301,37 +421,25 @@ bool InitFireWire(BasePort *&FwPort, std::vector<AmpIO *> &FwBoardList, int port
 
 
 /****************************************************************
-*   @brief  Initialize a Zynq-EMIO communication port and discover boards
+*  @brief  Initialize a Zynq-EMIO communication port and discover boards.
 *
-*   @details
-*   Creates a new `ZynqEmioPort` object for the specified *port* number.
-*   If the port opens successfully the routine:
-*     1. Enables or disables verbose output according to *isVerbose*.
-*     2. Assigns the newly-created object to the caller-provided reference
-*        `ZynqPort`.
-*     3. Queries node 0 (the only node on an EMIO link) for its board ID.
-*        When the ID is in the valid range, the function constructs an
-*        `AmpIO` handle for that board, registers it with the port, and
-*        appends the pointer to *ZynqBoardList*.
+*  @param   BasePort *&              ZynqPort      Reference that receives the
+*                                                  newly created ZynqEmioPort
+*                                                  pointer on success.
+*  @param   std::vector<AmpIO *>&    ZynqBoardList Vector to which discovered
+*                                                  AmpIO board objects are
+*                                                  appended.
+*  @param   int                      port          Device index of the Zynq
+*                                                  EMIO interface (usually 0).
+*  @param   bool                     isVerbose     Enables verbose printing if
+*                                                  set to true.
 *
-*   @param  BasePort *&        ZynqPort        Reference that receives the
-*                                              newly created `ZynqEmioPort`
-*                                              pointer on success
-*   @param  std::vector<AmpIO *>& ZynqBoardList
-*                                              Vector to which discovered
-*                                              `AmpIO` board objects are
-*                                              appended
-*   @param  int                port            Device index of the Zynq
-*                                              EMIO interface (usually 0)
-*   @param  bool               isVerbose       Enables verbose printing if
-*                                              set to *true*
+*  @note    Compiled only when Amp1394_HAS_EMIO is defined, otherwise returns
+*           false and suppresses unused parameter warnings.
+*  @note    Zynq EMIO port always has exactly one node (node 0) which is
+*           automatically queried for board discovery.
 *
-*   @note   The routine is compiled only when `Amp1394_HAS_EMIO` is defined.
-*           When that macro is absent the stub always returns *false*.
-*
-*   @return bool
-*           *true*  — Port initialised (even if no board detected)  
-*           *false* — Port failed to open or EMIO support not available
+*  @return  bool that indicates if the initialization was successful
 ****************************************************************/
 bool InitZynq(BasePort *&ZynqPort, std::vector<AmpIO *> &ZynqBoardList, int port, bool isVerbose) {
     #if Amp1394_HAS_EMIO
@@ -366,22 +474,29 @@ bool InitZynq(BasePort *&ZynqPort, std::vector<AmpIO *> &ZynqBoardList, int port
     #endif
 }
 
+
 /****************************************************************
-*   @brief this function continuously reads from the same register 
-*   using two different communication methods to test for glitches
+*  @brief  Tests that two communication methods read the same register
+*          and produce matching data.
 *
-*   @param BasePort     (*portone): First communication interface object 
-*                                   that provides access to the physical 
-*                                   connection to the controller boards   
-*   @param BasePort     (*porttwo): Second communication interface object 
-*                                   that provides access to the physical 
-*                                   connection to the controller boards   
-*   @param unsignedchar (boardNum): Board number to use
+*  @details Targets glitches that might occur from rapid concurrent reads
+*           using different communication methods. Both ports read the
+*           board status register back-to-back and compare the 32-bit values.
 *
-*   @note Outputs a message when the value read by the methods are 
-*   different and some statistics along the way and at the end
+*  @param   BasePort       (*portone)   First communication interface object
+*                                       that provides access to the physical
+*                                       connection to the controller boards.
+*  @param   BasePort       (*porttwo)   Second communication interface object
+*                                       that provides access to the physical
+*                                       connection to the controller boards.
+*  @param   unsigned char  (boardNum)   Target board number.
 *
-*   @return none
+*  @note    Logs mismatched readings with both ports' 32-bit status words
+*           in hex format.
+*  @note    Tracks successful reads, comparison failures, and low-level
+*           ReadQuadlet errors.
+*
+*  @return  none
 ****************************************************************/
 void ReadSameRegisterTest(BasePort *portone, BasePort *porttwo, unsigned char boardNum) {
     bool done = false;
@@ -423,26 +538,27 @@ void ReadSameRegisterTest(BasePort *portone, BasePort *porttwo, unsigned char bo
 }
 
 /****************************************************************
-*   @brief This function tests for glitches when writing and
-*   reading using different communication methods but to the
-*   same register
+*  @brief  Tests that one communication method can write while another
+*          reads the same register without data corruption.
 *
-*   @param BasePort     (*portone): First communication interface object 
-*                                   that provides access to the physical 
-*                                   connection to the controller boards   
-*   @param BasePort     (*porttwo): Second communication interface object 
-*                                   that provides access to the physical 
-*                                   connection to the controller boards   
-*   @param unsignedchar (boardNum): Board number to use
+*  @details Targets glitches that might occur from rapid write-then-read
+*           operations using different communication methods. One port writes
+*           incrementing values to a register while the other port reads
+*           back the data for verification.
 *
-*   @note Outputs a message when the value written and read are 
-*   different and some statistics along the way and at the end
-*   @note assumes the encoder preload in channel 1 exists (offset 4) for
-*   the given board
-*   @note accounts for reading and writing failures by not evaluating cases
-*   when those occur
+*  @param   BasePort       (*portone)   First communication interface object
+*                                       that provides access to the physical
+*                                       connection to the controller boards.
+*  @param   BasePort       (*porttwo)   Second communication interface object
+*                                       that provides access to the physical
+*                                       connection to the controller boards.
+*  @param   unsigned char  (boardNum)   Target board number.
 *
-*   @return none
+*  @note    Logs data mismatches showing expected vs actual values in hex.
+*  @note    Tracks successful operations, comparison failures, and failed
+*           ReadQuadlet/WriteQuadlet calls.
+*
+*  @return  none
 ****************************************************************/
 void WriteAndReadOneRegisterDifferentMethodsTest(BasePort *portone, BasePort *porttwo, unsigned char boardNum) {
     // setup variables and test information
@@ -454,7 +570,7 @@ void WriteAndReadOneRegisterDifferentMethodsTest(BasePort *portone, BasePort *po
     int count = 0;
     nodeaddr_t regnum = 0x14;  // Channel 1 preload (was 0x0F for REG_DEBUG)
 
-    // continuously write and read and look for glithes
+    // continuously write and read and look for glitches
     while (!done) {
         read_data = -1;
         write_data++;
@@ -488,25 +604,28 @@ void WriteAndReadOneRegisterDifferentMethodsTest(BasePort *portone, BasePort *po
 }
 
 /****************************************************************
-*   @brief: identical to WriteAndReadOneRegisterDifferentMethodsTest,
-*   but also ensures that both ports then read the same value.
+*  @brief  Tests that one communication method can write while both
+*          methods read the same register for cross-verification.
 *
-*   @param BasePort     (*portone): First communication interface object 
-*                                   that provides access to the physical 
-*                                   connection to the controller boards   
-*   @param BasePort     (*porttwo): Second communication interface object 
-*                                   that provides access to the physical 
-*                                   connection to the controller boards   
-*   @param unsignedchar (boardNum): Board number to use
+*  @details Targets glitches that might occur from rapid write-then-read
+*           operations with multiple readers using different communication
+*           methods. One port writes incrementing values while both ports
+*           read back the data for cross-verification.
 *
-*   @note Outputs a message when the value written and read are 
-*   different and some statistics along the way and at the end
-*   @note assumes the encoder preload in channel 1 exists (offset 4) for
-*   the given board
-*   @note accounts for reading and writing failures by not evaluating cases
-*   when those occur
+*  @param   BasePort       (*portone)   First communication interface object
+*                                       that provides access to the physical
+*                                       connection to the controller boards.
+*  @param   BasePort       (*porttwo)   Second communication interface object
+*                                       that provides access to the physical
+*                                       connection to the controller boards.
+*  @param   unsigned char  (boardNum)   Target board number.
 *
-*   @return none
+*  @note    Logs data mismatches showing write data vs read data from both
+*           ports in hex format.
+*  @note    Tracks successful operations, comparison failures, and failed
+*           ReadQuadlet/WriteQuadlet calls.
+*
+*  @return  none
 ****************************************************************/
 void WriteAndReadOneRegisterDifferentMethodsStressTest(BasePort *portone, BasePort *porttwo, unsigned char boardNum) {
     // setup variables and test information
@@ -519,7 +638,7 @@ void WriteAndReadOneRegisterDifferentMethodsStressTest(BasePort *portone, BasePo
     int count = 0;
     nodeaddr_t regnum = 0x14;  // Channel 1 preload (was 0x0F for REG_DEBUG)
 
-    // continuously write and read and look for glithes
+    // continuously write and read and look for glitches
     while (!done) {
         read_data_one = -1;
         write_data++;
@@ -553,36 +672,29 @@ void WriteAndReadOneRegisterDifferentMethodsStressTest(BasePort *portone, BasePo
     }
 }
 
-// good notes until ehre confirmed!!!
-
 /****************************************************************
-*   @brief tests that two communication methods can read the status 
-*   register at the same time 
+*  @brief  Tests that two communication methods can read the board status
+*          register simultaneously and produce consistent results.
 *
-*   @details ensures safety relay and power are on before looping
-*   having two different ports read the status at very close times 
-*   and then comparing their results, which is an attempt to isolate 
-*   for glitches caused exclusively by quick read with different 
-*   communication methods.
+*  @details Targets glitches that might occur from concurrent reads of the
+*           same register using different communication methods. Both ports
+*           read the board status register in quick succession after enabling
+*           power and safety relay.
 *
-*   @param BasePort     (*portone): First communication interface object 
-*                                   that provides access to the physical 
-*                                   connection to the controller boards   
-*   @param BasePort     (*porttwo): Second communication interface object 
-*                                   that provides access to the physical 
-*                                   connection to the controller boards   
-*   @param unsignedchar (boardNum): Board number to use
+*  @param   BasePort       (*portone)   First communication interface object
+*                                       that provides access to the physical
+*                                       connection to the controller boards.
+*  @param   BasePort       (*porttwo)   Second communication interface object
+*                                       that provides access to the physical
+*                                       connection to the controller boards.
+*  @param   unsigned char  (boardNum)   Target board number.
 *
-*   @note Outputs a message when the values read are not the expected values
-*   and some statistics along the way and at the end
-*   @note this test does not gaurentee anything except that reading
-*   alone at the same time does not cause issues. Any other circumstances
-*   may change the results
-*   @note this test does track how many times the actual attempt to read
-*   also fails (i.e. a call to ReadQuadlet returns false), which may
-*   indicate trouble with reading at the same time as well.
+*  @note    Logs mismatched status readings with port type identification
+*           and hex values.
+*  @note    Tracks successful reads, comparison failures, and failed
+*           ReadQuadlet calls.
 *
-*   @return none
+*  @return  none
 ****************************************************************/
 void ReadDifferentThingsDifferentMethodsTest(BasePort *portone, BasePort *porttwo, unsigned char boardNum) {
     bool done = false;
@@ -630,8 +742,8 @@ void ReadDifferentThingsDifferentMethodsTest(BasePort *portone, BasePort *porttw
     }
 
     std::cout << "attempts = " << std::dec << count << ", success = " << success << "\n";
-    std::cout << "comapare failures = " << compareFailures << "\n";
-    std::cout << "unsucessful attempts to read (i.e. One of the ReadQuadlet calls returned false) " << std::dec << failedQuadRead <<"\n";
+    std::cout << "compare failures = " << compareFailures << "\n";
+    std::cout << "unsuccessful attempts to read (i.e. One of the ReadQuadlet calls returned false) " << std::dec << failedQuadRead <<"\n";
 
     // ensure power is disabled and safety relay are off
     portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, PWR_DISABLE);
@@ -641,29 +753,28 @@ void ReadDifferentThingsDifferentMethodsTest(BasePort *portone, BasePort *porttw
 }
 
 /****************************************************************
-*   @brief tests that two communication methods can write to enable the
-*   safety relay and power at similar times
+*  @brief  Tests that two communication methods can write different
+*          control bits and both changes are properly applied.
 *
-*   @details ensures safety relay and power are off each time before 
-*   looping and having two different ports write at very close times,
-*   waiting, and then reading, which is an attempt to isolate for glitches
-*   caused exclusively by quick writes with different methods    
+*  @details Targets glitches that might occur from concurrent writes to
+*           different control bits using different communication methods.
+*           One port enables power while the other enables the safety relay,
+*           then verifies both settings took effect.
 *
-*   @param BasePort     (*portone): First communication interface object 
-*                                   that provides access to the physical 
-*                                   connection to the controller boards   
-*   @param BasePort     (*porttwo): Second communication interface object 
-*                                   that provides access to the physical 
-*                                   connection to the controller boards   
-*   @param unsignedchar (boardNum): Board number to use
+*  @param   BasePort       (*portone)   First communication interface object
+*                                       that provides access to the physical
+*                                       connection to the controller boards.
+*  @param   BasePort       (*porttwo)   Second communication interface object
+*                                       that provides access to the physical
+*                                       connection to the controller boards.
+*  @param   unsigned char  (boardNum)   Target board number.
 *
-*   @note Outputs a message when the values read are not the expected values
-*   and some statistics along the way and at the end
-*   @note this test does track how many times the actual attempt to write
-*   also fails (i.e. a call to WriteQuadlet returns false), which may
-*   indicate trouble with writing at the same time as well.
+*  @note    Logs missing control bits with port identification and expected
+*           vs actual state.
+*  @note    Tracks successful operations, per-port write failures, and failed
+*           WriteQuadlet calls.
 *
-*   @return none
+*  @return  none
 ****************************************************************/
 void WriteDifferentThingsDifferentMethodsTest(BasePort *portone, BasePort *porttwo, unsigned char boardNum) {
     bool done = false;
@@ -724,8 +835,8 @@ void WriteDifferentThingsDifferentMethodsTest(BasePort *portone, BasePort *portt
         }
     }
     std::cout << "attempts = " << std::dec << count << ", success = " << success << "\n";
-    std::cout << "failures with " << portOneString << std::dec << compareFailuresPortOne << "failures with " << portTwoString << compareFailuresPortTwo << "\n";
-    std::cout << "unsucessful attempts to write (i.e. One of the WriteQuadlet calls returned false) " << std::dec << failedQuadWrite <<"\n";
+    std::cout << " failures with " << portOneString << std::dec << compareFailuresPortOne << " failures with " << portTwoString << compareFailuresPortTwo << "\n";
+    std::cout << "unsuccessful attempts to write (i.e. One of the WriteQuadlet calls returned false) " << std::dec << failedQuadWrite <<"\n";
 
     // ensure power is disabled and safety relay are off
     portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, PWR_DISABLE);
@@ -735,35 +846,28 @@ void WriteDifferentThingsDifferentMethodsTest(BasePort *portone, BasePort *portt
 }
 
 /****************************************************************
-*   @brief: tests that two communication methods can write to enable the
-*   safety relay and power at similar times and then read the results at
-*   similar times
+*  @brief  Tests that two communication methods can write control bits
+*          and both can read back the combined status consistently.
 *
-*   @details: ensures safety relay and power are off each time before 
-*   looping and having two different ports write at very close times,
-*   waiting, and then reading with both ports at very close times, which 
-*   is an attempt to isolate for glitches that occur because of writing 
-*   and then reading very quickly with different methods
+*  @details Targets glitches that might occur from rapid write-then-read
+*           sequences using different communication methods. Both ports write
+*           different control bits, then both read back the status register
+*           to verify all changes are visible to both interfaces.
 *
-*   @param BasePort     (*portone): First communication interface object 
-*                                   that provides access to the physical 
-*                                   connection to the controller boards   
-*   @param BasePort     (*porttwo): Second communication interface object 
-*                                   that provides access to the physical 
-*                                   connection to the controller boards   
-*   @param unsignedchar (boardNum): Board number to use
+*  @param   BasePort       (*portone)   First communication interface object
+*                                       that provides access to the physical
+*                                       connection to the controller boards.
+*  @param   BasePort       (*porttwo)   Second communication interface object
+*                                       that provides access to the physical
+*                                       connection to the controller boards.
+*  @param   unsigned char  (boardNum)   Target board number.
 *
-*   @note Outputs a message when the values read do not match the written
-*   values and some statistics along the way and at the end
-*   @note: this test does track how many times the actual attempt to write
-*   also fails (i.e. a call to WriteQuadlet returns false), which may
-*   indicate trouble with writing at the same time as well.
-*   @note: this test does track how many times the actual attempt to read
-*   also fails (i.e. a call to ReadQuadlet returns false), which may
-*   indicate trouble with reading at the same time as well.
-*   @note: each type of failure can occur twice per iteration.
+*  @note    Logs missing control bits with port identification and which
+*           read operation detected the inconsistency.
+*  @note    Tracks successful operations, per-port read failures, and failed
+*           WriteQuadlet/ReadQuadlet calls.
 *
-*   @return none
+*  @return  none
 ****************************************************************/
 void WriteThenReadDifferentThingsDifferentMethodsTest(BasePort *portone, BasePort *porttwo, unsigned char boardNum) {
     bool done = false;
@@ -843,9 +947,9 @@ void WriteThenReadDifferentThingsDifferentMethodsTest(BasePort *portone, BasePor
     }
 
     std::cout << "attempts = " << std::dec << count << ", success = " << success << "\n";
-    std::cout << "failures with " << portOneString << std::dec << compareReadFailuresPortOne << "failures with " << portTwoString << compareReadFailuresPortTwo << "\n";
-    std::cout << "unsucessful attempts to write (i.e. One of the WriteQuadlet calls returned false) " << std::dec << failedQuadWrite <<"\n";    
-    std::cout << "unsucessful attempts to read (i.e. One of the ReadQuadlet calls returned false) " << std::dec << failedQuadRead <<"\n";
+    std::cout << " failures with " << portOneString << std::dec << compareReadFailuresPortOne << " failures with " << portTwoString << compareReadFailuresPortTwo << "\n";
+    std::cout << "unsuccessful attempts to write (i.e. One of the WriteQuadlet calls returned false) " << std::dec << failedQuadWrite <<"\n";    
+    std::cout << "unsuccessful attempts to read (i.e. One of the ReadQuadlet calls returned false) " << std::dec << failedQuadRead <<"\n";
     
     // ensure power is disabled and safety relay are off
     portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, PWR_DISABLE);
@@ -855,35 +959,29 @@ void WriteThenReadDifferentThingsDifferentMethodsTest(BasePort *portone, BasePor
 }
 
 /****************************************************************
-*   @brief: tests that two communication methods can read the status and
-*   and then enable the safety relay without messing up the intial reads.
+*  @brief  Tests that two communication methods can read status, then
+*          one can write, without corrupting the initial read data.
 *
-*   @details: ensures safety relay is off each time before looping and 
-*   having two different ports read at very close times, and then writing
-*   with one port at a very close time to turn on the safety relay, and
-*   attempting to read again with both communication methods at very close
-*   times, which is an attempt to isolate for glitches that occur because 
-*   of reading and then writing very quickly with different methods
+*  @details Targets glitches that might occur from rapid read-write
+*           sequences using different communication methods. Both ports
+*           read the status register, then one port writes to enable
+*           the safety relay, followed by verification that the status
+*           changed appropriately.
 *
-*   @param BasePort     (*portone): First communication interface object 
-*                                   that provides access to the physical 
-*                                   connection to the controller boards   
-*   @param BasePort     (*porttwo): Second communication interface object 
-*                                   that provides access to the physical 
-*                                   connection to the controller boards   
-*   @param unsignedchar (boardNum): Board number to use
+*  @param   BasePort       (*portone)   First communication interface object
+*                                       that provides access to the physical
+*                                       connection to the controller boards.
+*  @param   BasePort       (*porttwo)   Second communication interface object
+*                                       that provides access to the physical
+*                                       connection to the controller boards.
+*  @param   unsigned char  (boardNum)   Target board number.
 *
-*   @note Outputs a message when the value written and read are 
-*   not the expected values
-*   @note: this test does track how many times the actual attempt to write
-*   also fails (i.e. a call to WriteQuadlet returns false), which may
-*   indicate trouble with writing at the same time as well.
-*   @note: this test does track how many times the actual attempt to read
-*   also fails (i.e. a call to ReadQuadlet returns false), which may
-*   indicate trouble with reading at the same time as well.
-*   @note: each type of failure can occur twice per iteration.
+*  @note    Logs initial status readings that don't match and cases where
+*           writes don't take effect as expected.
+*  @note    Tracks successful operations, initial read mismatches, write
+*           verification failures, and failed ReadQuadlet/WriteQuadlet calls.
 *
-*   @return none
+*  @return  none
 ****************************************************************/
 void ReadThenWriteDifferentThingsDifferentMethodsTest(BasePort *portone, BasePort *porttwo, unsigned char boardNum) {
     bool done = false;
@@ -896,8 +994,8 @@ void ReadThenWriteDifferentThingsDifferentMethodsTest(BasePort *portone, BasePor
     quadlet_t status_result_one_stage_one;
     quadlet_t status_result_two_stage_one;
     quadlet_t status_result_stage_two;
-    size_t compareFailuresIntial = 0;
-    size_t compareFailuresIntialVsSecond = 0;
+    size_t compareFailuresInitial = 0;
+    size_t compareFailuresInitialVsSecond = 0;
     size_t failedQuadRead = 0;
     
     while (!done) {
@@ -915,15 +1013,15 @@ void ReadThenWriteDifferentThingsDifferentMethodsTest(BasePort *portone, BasePor
                     // check initial reads are equal
                     if (status_result_one_stage_one != status_result_two_stage_one) {
                         std::cout << "Initial Status reading from " << portOneString << ": " << std::hex << status_result_one_stage_one << ", initial status reading from " << portTwoString << ": " << status_result_two_stage_one << "\n";
-                        compareFailuresIntial++;
+                        compareFailuresInitial++;
                         iteration_success = false;
                     }
 
                     // check inital and second reads are not equal
                     if (status_result_stage_two == status_result_one_stage_one || status_result_stage_two == status_result_two_stage_one) {
-                        std::cout << "Intial Status reading from " << portOneString << ": " << std::hex << status_result_one_stage_one << ", second status reading: " << status_result_stage_two << "\n";
-                        std::cout << "Intial Status reading from " << portTwoString << ": " << std::hex << status_result_two_stage_one << ", second status reading: " << status_result_stage_two << "\n";
-                        compareFailuresIntialVsSecond++;
+                        std::cout << "Initial Status reading from " << portOneString << ": " << std::hex << status_result_one_stage_one << ", second status reading: " << status_result_stage_two << "\n";
+                        std::cout << "Initial Status reading from " << portTwoString << ": " << std::hex << status_result_two_stage_one << ", second status reading: " << status_result_stage_two << "\n";
+                        compareFailuresInitialVsSecond++;
                         iteration_success = false;
                     }
                     if (iteration_success) {
@@ -940,7 +1038,7 @@ void ReadThenWriteDifferentThingsDifferentMethodsTest(BasePort *portone, BasePor
         }
         
         // end conditions and data tracking
-        if (compareFailuresIntial + compareFailuresIntialVsSecond > 400) { // ADJUSTABLE
+        if (compareFailuresInitial + compareFailuresInitialVsSecond > 400) { // ADJUSTABLE
             done = true;
         }
 
@@ -954,10 +1052,10 @@ void ReadThenWriteDifferentThingsDifferentMethodsTest(BasePort *portone, BasePor
     }
 
     std::cout << "attempts = " << std::dec << count << ", success = " << success << "\n";
-    std::cout << "failures with initial readings not matching: " << std::dec << compareFailuresIntial << "\n";
-    std::cout << "failures with first and second readings matching: " << std::dec << compareFailuresIntialVsSecond << "\n";
-    std::cout << "unsucessful attempts to write (i.e. One of the WriteQuadlet calls returned false) " << std::dec << failedQuadWrite <<"\n";    
-    std::cout << "unsucessful attempts to read (i.e. One of the ReadQuadlet calls returned false) " << std::dec << failedQuadRead <<"\n";
+    std::cout << "failures with initial readings not matching: " << std::dec << compareFailuresInitial << "\n";
+    std::cout << "failures where first and second readings should not match: " << std::dec << compareFailuresInitialVsSecond << "\n";
+    std::cout << "unsuccessful attempts to write (i.e. One of the WriteQuadlet calls returned false) " << std::dec << failedQuadWrite <<"\n";    
+    std::cout << "unsuccessful attempts to read (i.e. One of the ReadQuadlet calls returned false) " << std::dec << failedQuadRead <<"\n";
     
     // ensure safety relay is off
     portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, RELAY_OFF);
@@ -965,34 +1063,30 @@ void ReadThenWriteDifferentThingsDifferentMethodsTest(BasePort *portone, BasePor
 }
 
 /****************************************************************
-*   @brief: tests that two communication methods can read the status and
-*   and then enable the safety relay and then read the status again.
+*  @brief  Tests that two communication methods can perform rapid
+*          read-write-read sequences without data corruption.
 *
-*   @details: ensures safety relay is off each time before looping and 
-*   having two different ports read at very close times, and then writing
-*   with one port at a very close time to turn on the safety relay, and
-*   attempting to read again with both communication methods at very close
-*   times, which is an attempt to isolate for glitches that occur because 
-*   of a rapid read-write-read rapid sequence with different communication 
-*   methods.
+*  @details Targets glitches that might occur from rapid read-write-read
+*           sequences using different communication methods. Both ports
+*           read status, one port writes to enable the safety relay, then
+*           both ports read again to verify consistency throughout the
+*           operation sequence.
 *
-*   @param BasePort     (*portone): First communication interface object 
-*                                   that provides access to the physical 
-*                                   connection to the controller boards   
-*   @param BasePort     (*porttwo): Second communication interface object 
-*                                   that provides access to the physical 
-*                                   connection to the controller boards   
-*   @param unsignedchar (boardNum): Board number to use
+*  @param   BasePort       (*portone)   First communication interface object
+*                                       that provides access to the physical
+*                                       connection to the controller boards.
+*  @param   BasePort       (*porttwo)   Second communication interface object
+*                                       that provides access to the physical
+*                                       connection to the controller boards.
+*  @param   unsigned char  (boardNum)   Target board number.
 *
-*   @note: this test does track how many times the actual attempt to write
-*   also fails (i.e. a call to WriteQuadlet returns false), which may
-*   indicate trouble with writing at the same time as well.
-*   @note: this test does track how many times the actual attempt to read
-*   also fails (i.e. a call to ReadQuadlet returns false), which may
-*   indicate trouble with reading at the same time as well.
-*   @note: each type of failure can occur twice per iteration.
+*  @note    Logs mismatched readings at each stage and cases where expected
+*           status changes don't occur.
+*  @note    Tracks successful operations, initial read mismatches, second
+*           read mismatches, write verification failures, and failed
+*           ReadQuadlet/WriteQuadlet calls.
 *
-*   @return none
+*  @return  none
 ****************************************************************/
 void RapidReadWriteReadDifferentThingsDifferentMethodsTest(BasePort *portone, BasePort *porttwo, unsigned char boardNum) {
     bool done = false;
@@ -1006,9 +1100,9 @@ void RapidReadWriteReadDifferentThingsDifferentMethodsTest(BasePort *portone, Ba
     quadlet_t status_result_two_stage_one;
     quadlet_t status_result_one_stage_two;
     quadlet_t status_result_two_stage_two;
-    size_t compareFailuresIntial = 0;
+    size_t compareFailuresInitial = 0;
     size_t compareFailuresSecond = 0;
-    size_t compareFailuresIntialVsSecond = 0;
+    size_t compareFailuresInitialVsSecond = 0;
     size_t failedQuadRead = 0;
     
     while (!done) {
@@ -1024,7 +1118,7 @@ void RapidReadWriteReadDifferentThingsDifferentMethodsTest(BasePort *portone, Ba
                     // check initial reads are equal
                     if (status_result_one_stage_one != status_result_two_stage_one) {
                         std::cout << "Initial Status reading from " << portOneString << ": " << std::hex << status_result_one_stage_one << ", initial status reading from " << portTwoString << ": " << status_result_two_stage_one << "\n";
-                        compareFailuresIntial++;
+                        compareFailuresInitial++;
                         iteration_success = false;
                     }
 
@@ -1037,9 +1131,9 @@ void RapidReadWriteReadDifferentThingsDifferentMethodsTest(BasePort *portone, Ba
 
                     // check inital and second reads are not equal
                     if (status_result_one_stage_two == status_result_one_stage_one || status_result_two_stage_two == status_result_two_stage_one) {
-                        std::cout << "Intial Status reading from " << portOneString << ": " << std::hex << status_result_one_stage_one << ", second status reading from " << portOneString << ": " << status_result_one_stage_two << "\n";
-                        std::cout << "Intial Status reading from " << portTwoString << ": " << std::hex << status_result_two_stage_one << ", second status reading from " << portTwoString << ": " << status_result_two_stage_two << "\n";
-                        compareFailuresIntialVsSecond++;
+                        std::cout << "Initial Status reading from " << portOneString << ": " << std::hex << status_result_one_stage_one << ", second status reading from " << portOneString << ": " << status_result_one_stage_two << "\n";
+                        std::cout << "Initial Status reading from " << portTwoString << ": " << std::hex << status_result_two_stage_one << ", second status reading from " << portTwoString << ": " << status_result_two_stage_two << "\n";
+                        compareFailuresInitialVsSecond++;
                         iteration_success = false;
                     }
                     if (iteration_success) {
@@ -1056,7 +1150,7 @@ void RapidReadWriteReadDifferentThingsDifferentMethodsTest(BasePort *portone, Ba
         }
         
         // end conditions and data tracking
-        if (compareFailuresIntial + compareFailuresSecond + compareFailuresIntialVsSecond > 400) { // ADJUSTABLE
+        if (compareFailuresInitial + compareFailuresSecond + compareFailuresInitialVsSecond > 400) { // ADJUSTABLE
             done = true;
         }
 
@@ -1070,11 +1164,11 @@ void RapidReadWriteReadDifferentThingsDifferentMethodsTest(BasePort *portone, Ba
     }
 
     std::cout << "attempts = " << std::dec << count << ", success = " << success << "\n";
-    std::cout << "failures with initial readings not matching: " << std::dec << compareFailuresIntial << "\n";
+    std::cout << "failures with initial readings not matching: " << std::dec << compareFailuresInitial << "\n";
     std::cout << "failures with second readings not matching: " << std::dec << compareFailuresSecond << "\n";
-    std::cout << "failures with first and second readings matching: " << std::dec << compareFailuresIntialVsSecond << "\n";
-    std::cout << "unsucessful attempts to write (i.e. One of the WriteQuadlet calls returned false) " << std::dec << failedQuadWrite <<"\n";    
-    std::cout << "unsucessful attempts to read (i.e. One of the ReadQuadlet calls returned false) " << std::dec << failedQuadRead <<"\n";
+    std::cout << "failures where first and second readings should not match: " << std::dec << compareFailuresInitialVsSecond << "\n";
+    std::cout << "unsuccessful attempts to write (i.e. One of the WriteQuadlet calls returned false) " << std::dec << failedQuadWrite <<"\n";    
+    std::cout << "unsuccessful attempts to read (i.e. One of the ReadQuadlet calls returned false) " << std::dec << failedQuadRead <<"\n";
     
     // ensure safety relay is off
     portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, RELAY_OFF);
@@ -1082,36 +1176,29 @@ void RapidReadWriteReadDifferentThingsDifferentMethodsTest(BasePort *portone, Ba
 }
 
 /****************************************************************
-*   @brief: tests that two communication methods can disable the safety 
-*   relay and then read the status and then write the status and
-*   and then enable the safety relay
+*  @brief  Tests that two communication methods can perform rapid
+*          write-read-write sequences without data corruption.
 *
-*   @details: ensures safety relay is on each time before looping and 
-*   having one port write at very close time to both ports reading, and 
-*   then writing again to the relay all in quick sucession and then 
-*   reading afterwards, which is an attempt to isolate for glitches that 
-*   occur because of a rapid write-read-write sequence with different 
-*   communication methods.
+*  @details Targets glitches that might occur from rapid write-read-write
+*           sequences using different communication methods. One port
+*           disables the safety relay, both ports read status, then one
+*           port re-enables the relay to verify the sequence operates
+*           correctly.
 *
-*   @param BasePort     (*portone): First communication interface object 
-*                                   that provides access to the physical 
-*                                   connection to the controller boards   
-*   @param BasePort     (*porttwo): Second communication interface object 
-*                                   that provides access to the physical 
-*                                   connection to the controller boards   
-*   @param unsignedchar (boardNum): Board number to use
+*  @param   BasePort       (*portone)   First communication interface object
+*                                       that provides access to the physical
+*                                       connection to the controller boards.
+*  @param   BasePort       (*porttwo)   Second communication interface object
+*                                       that provides access to the physical
+*                                       connection to the controller boards.
+*  @param   unsigned char  (boardNum)   Target board number.
 *
-*   @note Outputs a message when the value written and read are 
-*   different and some statistics along the way and at the end
-*   @note: this test does track how many times the actual attempt to write
-*   also fails (i.e. a call to WriteQuadlet returns false), which may
-*   indicate trouble with writing at the same time as well.
-*   @note: this test does track how many times the actual attempt to read
-*   also fails (i.e. a call to ReadQuadlet returns false), which may
-*   indicate trouble with reading at the same time as well.
-*   @note: each type of failure can occur twice per iteration.
+*  @note    Logs mismatched initial readings and cases where write operations
+*           don't take effect as expected.
+*  @note    Tracks successful operations, initial read mismatches, write
+*           verification failures, and failed ReadQuadlet/WriteQuadlet calls.
 *
-*   @return none
+*  @return  none
 ****************************************************************/
 void RapidWriteReadWriteDifferentThingsDifferentMethodsTest(BasePort *portone, BasePort *porttwo, unsigned char boardNum) {
     bool done = false;
@@ -1124,8 +1211,8 @@ void RapidWriteReadWriteDifferentThingsDifferentMethodsTest(BasePort *portone, B
     quadlet_t status_result_one_stage_one;
     quadlet_t status_result_two_stage_one;
     quadlet_t status_result_stage_two;
-    size_t compareFailuresIntial = 0;
-    size_t compareFailuresIntialVsSecond = 0;
+    size_t compareFailuresInitial = 0;
+    size_t compareFailuresInitialVsSecond = 0;
     size_t failedQuadRead = 0;
     
     while (!done) {
@@ -1144,15 +1231,15 @@ void RapidWriteReadWriteDifferentThingsDifferentMethodsTest(BasePort *portone, B
                     // check initial reads are equal
                     if (status_result_one_stage_one != status_result_two_stage_one) {
                         std::cout << "Initial Status reading from " << portOneString << ": " << std::hex << status_result_one_stage_one << ", initial status reading from " << portTwoString << ": " << status_result_two_stage_one << "\n";
-                        compareFailuresIntial++;
+                        compareFailuresInitial++;
                         iteration_success = false;
                     }
 
                     // check inital and second reads are not equal
                     if (status_result_stage_two == status_result_one_stage_one || status_result_stage_two == status_result_two_stage_one) {
-                        std::cout << "Intial Status reading from " << portOneString << ": " << std::hex << status_result_one_stage_one << ", second status reading: " << status_result_stage_two << "\n";
-                        std::cout << "Intial Status reading from " << portTwoString << ": " << std::hex << status_result_two_stage_one << ", second status reading: " << status_result_stage_two << "\n";
-                        compareFailuresIntialVsSecond++;
+                        std::cout << "Initial Status reading from " << portOneString << ": " << std::hex << status_result_one_stage_one << ", second status reading: " << status_result_stage_two << "\n";
+                        std::cout << "Initial Status reading from " << portTwoString << ": " << std::hex << status_result_two_stage_one << ", second status reading: " << status_result_stage_two << "\n";
+                        compareFailuresInitialVsSecond++;
                         iteration_success = false;
                     }
                     if (iteration_success) {
@@ -1169,7 +1256,7 @@ void RapidWriteReadWriteDifferentThingsDifferentMethodsTest(BasePort *portone, B
         }
         
         // end conditions and data tracking
-        if (compareFailuresIntial + compareFailuresIntialVsSecond > 400) { // ADJUSTABLE
+        if (compareFailuresInitial + compareFailuresInitialVsSecond > 400) { // ADJUSTABLE
             done = true;
         }
 
@@ -1183,10 +1270,10 @@ void RapidWriteReadWriteDifferentThingsDifferentMethodsTest(BasePort *portone, B
     }
 
     std::cout << "attempts = " << std::dec << count << ", success = " << success << "\n";
-    std::cout << "failures with initial readings not matching: " << std::dec << compareFailuresIntial << "\n";
-    std::cout << "failures with first and second readings matching: " << std::dec << compareFailuresIntialVsSecond << "\n";
-    std::cout << "unsucessful attempts to write (i.e. One of the WriteQuadlet calls returned false) " << std::dec << failedQuadWrite <<"\n";    
-    std::cout << "unsucessful attempts to read (i.e. One of the ReadQuadlet calls returned false) " << std::dec << failedQuadRead <<"\n";
+    std::cout << "failures with initial readings not matching: " << std::dec << compareFailuresInitial << "\n";
+    std::cout << "failures where first and second readings should not match: " << std::dec << compareFailuresInitialVsSecond << "\n";
+    std::cout << "unsuccessful attempts to write (i.e. One of the WriteQuadlet calls returned false) " << std::dec << failedQuadWrite <<"\n";    
+    std::cout << "unsuccessful attempts to read (i.e. One of the ReadQuadlet calls returned false) " << std::dec << failedQuadRead <<"\n";
     
     // ensure safety relay is off
     portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, RELAY_OFF);
@@ -1194,25 +1281,30 @@ void RapidWriteReadWriteDifferentThingsDifferentMethodsTest(BasePort *portone, B
 }
 
 /****************************************************************
-*   @brief: This function tests for glitches when writing and
-*   reading with the waveform with different communication methods
-*  
-*   @details: Outputs a message when the value written and read are 
-*   different
+*  @brief  Tests that two communication methods can write and read
+*          waveform data without corruption or glitches.
 *
-*   @param BasePort     (*portone): First communication interface object 
-*                                   that provides access to the physical 
-*                                   connection to the controller boards   
-*   @param BasePort     (*porttwo): Second communication interface object 
-*                                   that provides access to the physical 
-*                                   connection to the controller boards   
-*   @param AmpIO          (*board): board object of the interface for the
-*                                   board being used in this function
+*  @details Targets glitches that might occur from large block transfers
+*           using different communication methods. One port writes a test
+*           waveform pattern while another port reads it back to verify
+*           data integrity across the complete waveform table.
 *
-*   @note rereads the waveform a second time to see if any glitches
-*   corrupt the waveform or are temporary
+*  @param   BasePort       (*portone)   First communication interface object
+*                                       that provides access to the physical
+*                                       connection to the controller boards.
+*  @param   BasePort       (*porttwo)   Second communication interface object
+*                                       that provides access to the physical
+*                                       connection to the controller boards.
+*  @param   unsigned char  (boardNum)   Target board number.
+*  @param   AmpIO          (*board)     Board object interface for accessing
+*                                       board-specific parameters.
 *
-*   @return none
+*  @note    Logs waveform mismatches showing quadlet index, read value, and
+*           expected value in hex format.
+*  @note    Tracks waveform data integrity and performs a second read after
+*           delays if initial mismatches are detected.
+*
+*  @return  none
 ****************************************************************/
 void WaveformReadAndWriteDifferentMethodsTest(BasePort *portone, BasePort *porttwo, unsigned char boardNum, AmpIO *board) {
     const unsigned int WLEN = 256;
@@ -1318,7 +1410,31 @@ void WaveformReadAndWriteDifferentMethodsTest(BasePort *portone, BasePort *portt
     }
 }
 
-
+/****************************************************************
+*  @brief  Tests that two communication methods can read different
+*          registers simultaneously without interfering with each other.
+*
+*  @details Targets glitches that might occur from concurrent reads of
+*           different registers using different communication methods.
+*           One port reads the preload register while the other reads
+*           the board status register to verify both operations complete
+*           successfully.
+*
+*  @param   BasePort       (*portone)   First communication interface object
+*                                       that provides access to the physical
+*                                       connection to the controller boards.
+*  @param   BasePort       (*porttwo)   Second communication interface object
+*                                       that provides access to the physical
+*                                       connection to the controller boards.
+*  @param   unsigned char  (boardNum)   Target board number.
+*
+*  @note    Logs incorrect preload and relay readings with expected vs
+*           actual values.
+*  @note    Tracks successful operations, preload read failures, relay
+*           read failures, and failed ReadQuadlet calls.
+*
+*  @return  none
+****************************************************************/
 void ReadRegisterAndStatusTest(BasePort *portone, BasePort *porttwo, unsigned char boardNum) {
     bool done = false;
     quadlet_t read_data_port_one;
@@ -1388,14 +1504,37 @@ void ReadRegisterAndStatusTest(BasePort *portone, BasePort *porttwo, unsigned ch
     std::cout << "attempts = " << std::dec << count << ", success = " << success << "\n";
     std::cout << "failures with preload reading: " << std::dec << preload_incorrect << "\n";
     std::cout << "failures with relay reading: " << std::dec << relay_incorrect << "\n";
-    std::cout << "unsucessful attempts to read " << std::dec << readFailures <<"\n";
+    std::cout << "unsuccessful attempts to read " << std::dec << readFailures <<"\n";
     
     // ensure safety relay is back off
     portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, RELAY_OFF);
     Amp1394_Sleep(50*1e-6);
 }
 
-
+/****************************************************************
+*  @brief  Tests that one communication method can read a register while
+*          another writes to a different register simultaneously.
+*
+*  @details Targets glitches that might occur from concurrent read and write
+*           operations to different registers using different communication
+*           methods. One port reads the preload register while the other
+*           writes to the board status register.
+*
+*  @param   BasePort       (*portone)   First communication interface object
+*                                       that provides access to the physical
+*                                       connection to the controller boards.
+*  @param   BasePort       (*porttwo)   Second communication interface object
+*                                       that provides access to the physical
+*                                       connection to the controller boards.
+*  @param   unsigned char  (boardNum)   Target board number.
+*
+*  @note    Logs incorrect preload readings and relay write verification
+*           failures with expected vs actual values.
+*  @note    Tracks successful operations, preload read failures, relay
+*           write failures, and failed ReadQuadlet/WriteQuadlet calls.
+*
+*  @return  none
+****************************************************************/
 void ReadRegisterWriteStatusTest(BasePort *portone, BasePort *porttwo, unsigned char boardNum) {
     bool done = false;
     quadlet_t read_data_port_one;
@@ -1480,13 +1619,37 @@ void ReadRegisterWriteStatusTest(BasePort *portone, BasePort *porttwo, unsigned 
     std::cout << "attempts = " << std::dec << count << ", success = " << success << "\n";
     std::cout << "failures with preload reading: " << std::dec << preload_incorrect << "\n";
     std::cout << "failures with relay writing: " << std::dec << relay_incorrect << "\n";
-    std::cout << "unsucessful attempts to read or write " << std::dec << instructionFailures <<"\n";
+    std::cout << "unsuccessful attempts to read or write " << std::dec << instructionFailures <<"\n";
     
     // ensure safety relay is back off
     portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, RELAY_OFF);
     Amp1394_Sleep(50*1e-6);
 }
 
+/****************************************************************
+*  @brief  Tests that one communication method can write to a register
+*          while another reads from a different register simultaneously.
+*
+*  @details Targets glitches that might occur from concurrent write and read
+*           operations to different registers using different communication
+*           methods. One port writes to a register while the other reads
+*           the board status register.
+*
+*  @param   BasePort       (*portone)   First communication interface object
+*                                       that provides access to the physical
+*                                       connection to the controller boards.
+*  @param   BasePort       (*porttwo)   Second communication interface object
+*                                       that provides access to the physical
+*                                       connection to the controller boards.
+*  @param   unsigned char  (boardNum)   Target board number.
+*
+*  @note    Logs register write verification failures and incorrect relay
+*           readings with expected vs actual values in hex.
+*  @note    Tracks successful operations, register write failures, relay
+*           read failures, and failed ReadQuadlet/WriteQuadlet calls.
+*
+*  @return  none
+****************************************************************/
 void WriteRegisterReadStatusTest(BasePort *portone, BasePort *porttwo, unsigned char boardNum) {
     bool done = false;
     quadlet_t read_data_port_one;
@@ -1565,13 +1728,37 @@ void WriteRegisterReadStatusTest(BasePort *portone, BasePort *porttwo, unsigned 
     std::cout << "attempts = " << std::dec << count << ", success = " << success << "\n";
     std::cout << "failures with register writing: " << std::dec << register_incorrect << "\n";
     std::cout << "failures with relay reading: " << std::dec << relay_incorrect << "\n";
-    std::cout << "unsucessful attempts to read or write " << std::dec << instructionFailures <<"\n";
+    std::cout << "unsuccessful attempts to read or write " << std::dec << instructionFailures <<"\n";
     
     // ensure safety relay is back off
     portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, RELAY_OFF);
     Amp1394_Sleep(50*1e-6);
 }
 
+/****************************************************************
+*  @brief  Tests that two communication methods can write to different
+*          registers simultaneously without interfering with each other.
+*
+*  @details Targets glitches that might occur from concurrent writes to
+*           different registers using different communication methods.
+*           One port writes to a data register while the other writes
+*           to the board status register.
+*
+*  @param   BasePort       (*portone)   First communication interface object
+*                                       that provides access to the physical
+*                                       connection to the controller boards.
+*  @param   BasePort       (*porttwo)   Second communication interface object
+*                                       that provides access to the physical
+*                                       connection to the controller boards.
+*  @param   unsigned char  (boardNum)   Target board number.
+*
+*  @note    Logs register and relay write verification failures with
+*           expected vs actual values in hex.
+*  @note    Tracks successful operations, register write failures, relay
+*           write failures, and failed ReadQuadlet/WriteQuadlet calls.
+*
+*  @return  none
+****************************************************************/
 void WriteRegisterWriteStatusTest(BasePort *portone, BasePort *porttwo, unsigned char boardNum) {
     bool done = false;
     quadlet_t read_data_port_one;
@@ -1652,13 +1839,37 @@ void WriteRegisterWriteStatusTest(BasePort *portone, BasePort *porttwo, unsigned
     std::cout << "attempts = " << std::dec << count << ", success = " << success << "\n";
     std::cout << "failures with register writing: " << std::dec << register_incorrect << "\n";
     std::cout << "failures with relay writing: " << std::dec << relay_incorrect << "\n";
-    std::cout << "unsucessful attempts to read or write " << std::dec << instructionFailures <<"\n";
+    std::cout << "unsuccessful attempts to read or write " << std::dec << instructionFailures <<"\n";
     
     // ensure safety relay is back off
     portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, RELAY_OFF);
     Amp1394_Sleep(50*1e-6);
 }
 
+/****************************************************************
+*  @brief  Tests that two communication methods can read different
+*          registers multiple times without cross-interference.
+*
+*  @details Targets glitches that might occur from repeated concurrent
+*           reads of different registers using different communication
+*           methods. Both ports read different registers twice in sequence
+*           to verify consistent operation under stress conditions.
+*
+*  @param   BasePort       (*portone)   First communication interface object
+*                                       that provides access to the physical
+*                                       connection to the controller boards.
+*  @param   BasePort       (*porttwo)   Second communication interface object
+*                                       that provides access to the physical
+*                                       connection to the controller boards.
+*  @param   unsigned char  (boardNum)   Target board number.
+*
+*  @note    Logs per-port preload and relay reading failures with port
+*           identification and expected vs actual values.
+*  @note    Tracks successful operations, per-port preload failures,
+*           per-port relay failures, and failed ReadQuadlet calls.
+*
+*  @return  none
+****************************************************************/
 void ReadRegisterAndStatusStressTest(BasePort *portone, BasePort *porttwo, unsigned char boardNum) {
     bool done = false;
     quadlet_t read_data_port_one_first_read;
@@ -1767,18 +1978,43 @@ void ReadRegisterAndStatusStressTest(BasePort *portone, BasePort *porttwo, unsig
     }
 
     std::cout << "attempts = " << std::dec << count << ", success = " << success << "\n";
-    std::cout << "failures with " << portOneString << "preload reading: " << std::dec << preload_portone_failures << "\n";
-    std::cout << "failures with " << portTwoString << "preload reading: " << std::dec << preload_porttwo_failures << "\n";
-    std::cout << "failures with " << portOneString << "relay reading: " << std::dec << relay_portone_failures << "\n";
-    std::cout << "failures with " << portTwoString << "relay reading: " << std::dec << relay_porttwo_failures << "\n";
-    std::cout << "unsucessful attempts to read " << std::dec << readFailures <<"\n";
+    std::cout << " failures with " << portOneString << " preload reading: " << std::dec << preload_portone_failures << "\n";
+    std::cout << " failures with " << portTwoString << " preload reading: " << std::dec << preload_porttwo_failures << "\n";
+    std::cout << " failures with " << portOneString << " relay reading: " << std::dec << relay_portone_failures << "\n";
+    std::cout << " failures with " << portTwoString << " relay reading: " << std::dec << relay_porttwo_failures << "\n";
+    std::cout << "unsuccessful attempts to read " << std::dec << readFailures <<"\n";
     
     // ensure safety relay is back off
     portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, RELAY_OFF);
     Amp1394_Sleep(50*1e-6);
 }
 
-
+/****************************************************************
+*  @brief  Tests that two communication methods can write to different
+*          registers multiple times under stress conditions.
+*
+*  @details Targets glitches that might occur from repeated concurrent
+*           writes to different registers using different communication
+*           methods. Multiple sequential writes are performed to both
+*           data and control registers to verify sustained operation
+*           integrity.
+*
+*  @param   BasePort       (*portone)   First communication interface object
+*                                       that provides access to the physical
+*                                       connection to the controller boards.
+*  @param   BasePort       (*porttwo)   Second communication interface object
+*                                       that provides access to the physical
+*                                       connection to the controller boards.
+*  @param   unsigned char  (boardNum)   Target board number.
+*
+*  @note    Logs register, relay, and power write verification failures
+*           with expected vs actual values in hex.
+*  @note    Tracks successful operations, register write failures, relay
+*           write failures, power write failures, and failed ReadQuadlet/
+*           WriteQuadlet calls.
+*
+*  @return  none
+****************************************************************/
 void WriteRegisterAndStatusStressTest(BasePort *portone, BasePort *porttwo, unsigned char boardNum) {
     bool done = false;
     quadlet_t register_read;
@@ -1886,7 +2122,7 @@ void WriteRegisterAndStatusStressTest(BasePort *portone, BasePort *porttwo, unsi
     std::cout << "failures with register writing: " << std::dec << register_failures << "\n";
     std::cout << "failures with relay writing: " << std::dec << relay_failures << "\n";
     std::cout << "failures with power writing: " << std::dec << power_failures << "\n";
-    std::cout << "unsucessful attempts to read or write " << std::dec << instructionFailures <<"\n";
+    std::cout << "unsuccessful attempts to read or write " << std::dec << instructionFailures <<"\n";
     
     // ensure safety relay is back off
     portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, RELAY_OFF);
@@ -1895,7 +2131,33 @@ void WriteRegisterAndStatusStressTest(BasePort *portone, BasePort *porttwo, unsi
     Amp1394_Sleep(50*1e-6);
 }
 
-void AlternatingReadAndWriteRegisterAndStatusStressTest(BasePort *portone, BasePort *porttwo, unsigned char boardNum){
+/****************************************************************
+*  @brief  Tests that two communication methods can perform alternating
+*          read and write operations without interference.
+*
+*  @details Targets glitches that might occur from rapid alternating
+*           read-write sequences using different communication methods.
+*           Interleaved read and write operations are performed on both
+*           data and control registers to verify operation coherence
+*           under mixed access patterns.
+*
+*  @param   BasePort       (*portone)   First communication interface object
+*                                       that provides access to the physical
+*                                       connection to the controller boards.
+*  @param   BasePort       (*porttwo)   Second communication interface object
+*                                       that provides access to the physical
+*                                       connection to the controller boards.
+*  @param   unsigned char  (boardNum)   Target board number.
+*
+*  @note    Logs register, relay, and power operation failures at different
+*           stages with expected vs actual values in hex.
+*  @note    Tracks successful operations, register operation failures,
+*           relay operation failures, power operation failures, and failed
+*           ReadQuadlet/WriteQuadlet calls.
+*
+*  @return  none
+****************************************************************/
+void AlternatingReadAndWriteRegisterAndStatusStressTest(BasePort *portone, BasePort *porttwo, unsigned char boardNum) {
     bool done = false;
     size_t success = 0;
     size_t power_failures = 0;
@@ -2006,7 +2268,7 @@ void AlternatingReadAndWriteRegisterAndStatusStressTest(BasePort *portone, BaseP
     std::cout << "failures with register writing: " << std::dec << register_failures << "\n";
     std::cout << "failures with relay writing: " << std::dec << relay_failures << "\n";
     std::cout << "failures with power writing: " << std::dec << power_failures << "\n";
-    std::cout << "unsucessful attempts to read or write " << std::dec << instructionFailures <<"\n";
+    std::cout << "unsuccessful attempts to read or write " << std::dec << instructionFailures <<"\n";
     
     // ensure safety relay is back off
     portone->WriteQuadlet(boardNum, BoardIO::BOARD_STATUS, RELAY_OFF);
@@ -2015,6 +2277,34 @@ void AlternatingReadAndWriteRegisterAndStatusStressTest(BasePort *portone, BaseP
     Amp1394_Sleep(50*1e-6);
 }
 
+/****************************************************************
+*  @brief  Find and select a common board accessible through two
+*          different communication ports.
+*
+*  @param   const std::string &        portNameOne      Name of first port for
+*                                                        display purposes.
+*  @param   const std::string &        portNameTwo      Name of second port for
+*                                                        display purposes.
+*  @param   const std::vector<AmpIO *> &boardListOne    Vector of boards
+*                                                        available on first port.
+*  @param   const std::vector<AmpIO *> &boardListTwo    Vector of boards
+*                                                        available on second port.
+*  @param   AmpIO *&                   selectedBoardOne Reference to receive
+*                                                        selected board object
+*                                                        for first port.
+*  @param   AmpIO *&                   selectedBoardTwo Reference to receive
+*                                                        selected board object
+*                                                        for second port.
+*  @param   unsigned char &            curBoardNum      Reference to receive
+*                                                        selected board ID.
+*
+*  @note    Automatically selects board if only one common board exists,
+*           otherwise prompts user for selection.
+*  @note    Accepts hex input (0-9, a-f, A-F) for board selection and
+*           handles EOF conditions gracefully.
+*
+*  @return  bool that indicates if a common board was successfully selected
+****************************************************************/
 bool SelectCommonBoard(const std::string &portNameOne, const std::string &portNameTwo,
                        const std::vector<AmpIO *> &boardListOne,
                        const std::vector<AmpIO *> &boardListTwo,
@@ -2089,15 +2379,57 @@ bool SelectCommonBoard(const std::string &portNameOne, const std::string &portNa
     return false;
 }
 
+/****************************************************************
+*  @brief  Select two communication ports from available options
+*          for dual-port testing.
+*
+*  @param   bool                    usingZynq           Flag indicating Zynq
+*                                                       port availability.
+*  @param   bool                    usingFW             Flag indicating FireWire
+*                                                       port availability.
+*  @param   bool                    usingEth            Flag indicating Ethernet
+*                                                       port availability.
+*  @param   BasePort *&             portUsingOne        Reference to receive
+*                                                       first selected port.
+*  @param   BasePort *&             portUsingTwo        Reference to receive
+*                                                       second selected port.
+*  @param   std::string             EthPortString       Display name for
+*                                                       Ethernet port.
+*  @param   std::string             FwPortString        Display name for
+*                                                       FireWire port.
+*  @param   std::string             ZynqPortString      Display name for
+*                                                       Zynq port.
+*  @param   BasePort *              FwPort              Pointer to FireWire
+*                                                       port object.
+*  @param   BasePort *              ZynqPort            Pointer to Zynq
+*                                                       port object.
+*  @param   EthBasePort *           EthPort             Pointer to Ethernet
+*                                                       port object.
+*  @param   const std::vector<AmpIO *> &ZynqBoardList   Vector of boards
+*                                                       on Zynq port.
+*  @param   const std::vector<AmpIO *> &FwBoardList     Vector of boards
+*                                                       on FireWire port.
+*  @param   const std::vector<AmpIO *> &EthBoardList    Vector of boards
+*                                                       on Ethernet port.
+*  @param   std::vector<AmpIO *> &  portUsingOneBoardList Reference to receive
+*                                                       board list for first port.
+*  @param   std::vector<AmpIO *> &  portUsingTwoBoardList Reference to receive
+*                                                       board list for second port.
+*
+*  @note    Prompts user to enter two digits representing port choices
+*           (e.g., "13" for Ethernet then Zynq).
+*  @note    Validates input format and port availability before assignment.
+*
+*  @return  bool that indicates if the ports were successfully selected and 
+*           assigned.
+****************************************************************/
 bool SelectPorts(bool usingZynq, bool usingFW, bool usingEth, BasePort *&portUsingOne, BasePort *&portUsingTwo,
-    std::string EthPortString, std::string FwPortString, std::string ZynqPortString,  BasePort *FwPort, 
-    BasePort *ZynqPort, EthBasePort *EthPort, 
-    const std::vector<AmpIO *> &ZynqBoardList,  
-    const std::vector<AmpIO *> &FwBoardList,     
-    const std::vector<AmpIO *> &EthBoardList,    
-    std::vector<AmpIO *> &portUsingOneBoardList, 
-    std::vector<AmpIO *> &portUsingTwoBoardList) {
-    std::cout << "Ports availible: \n";
+                std::string EthPortString, std::string FwPortString, std::string ZynqPortString, 
+                BasePort *FwPort, BasePort *ZynqPort, EthBasePort *EthPort, 
+                const std::vector<AmpIO *> &ZynqBoardList,  const std::vector<AmpIO *> &FwBoardList,     
+                const std::vector<AmpIO *> &EthBoardList, std::vector<AmpIO *> &portUsingOneBoardList, 
+                std::vector<AmpIO *> &portUsingTwoBoardList) {
+    std::cout << "Ports available: \n";
     if (usingEth) {
         std::cout << "1) " << EthPortString << "\n";
     } 
@@ -2188,17 +2520,55 @@ bool SelectPorts(bool usingZynq, bool usingFW, bool usingEth, BasePort *&portUsi
     }
 }
 
+/****************************************************************
+*  @brief  Validate that both port selection and board selection
+*          are successful for testing configuration.
+*
+*  @param   bool validPorts    Flag indicating successful port selection.
+*  @param   bool validBoard    Flag indicating successful board selection.
+*
+*  @note    Simple validation function for configuration state checking.
+*
+*  @return  bool that indicates if the ports and board are valid
+****************************************************************/
 bool isValidConfig(bool validPorts, bool validBoard) {
     return validPorts && validBoard;
 }
 
-// before next commit recognize misspelling of zynq
+/****************************************************************
+*  @brief  Display available communication ports and their
+*          associated boards for user information.
+*
+*  @param   bool                       usingZynq        Flag indicating Zynq
+*                                                       port availability.
+*  @param   bool                       usingFW          Flag indicating FireWire
+*                                                       port availability.
+*  @param   bool                       usingEth         Flag indicating Ethernet
+*                                                       port availability.
+*  @param   std::string                EthPortString    Display name for
+*                                                       Ethernet port.
+*  @param   std::string                FwPortString     Display name for
+*                                                       FireWire port.
+*  @param   std::string                ZynqPortString   Display name for
+*                                                       Zynq port.
+*  @param   const std::vector<AmpIO *> &ZynqBoardList   Vector of boards
+*                                                       on Zynq port.
+*  @param   const std::vector<AmpIO *> &FwBoardList     Vector of boards
+*                                                       on FireWire port.
+*  @param   const std::vector<AmpIO *> &EthBoardList    Vector of boards
+*                                                       on Ethernet port.
+*
+*  @note    Displays board IDs in hexadecimal format with comma separation.
+*  @note    Only shows information for ports that are marked as available.
+*
+*  @return  none
+****************************************************************/
 void ListBoardsAndPorts(bool usingZynq, bool usingFW, bool usingEth, std::string EthPortString, std::string FwPortString, 
-    std::string ZynqPortString, const std::vector<AmpIO *> &ZynqBoardList, const std::vector<AmpIO *> &FwBoardList,     
-    const std::vector<AmpIO *> &EthBoardList) {
+                        std::string ZynqPortString, const std::vector<AmpIO *> &ZynqBoardList, 
+                        const std::vector<AmpIO *> &FwBoardList, const std::vector<AmpIO *> &EthBoardList) {
         if (usingEth) {
-            std::cout << EthPortString << " is availible as an Ethernet Port\n";
-            std::cout << "Availible boards on this Ethernet Port: ";
+            std::cout << EthPortString << " is available as an Ethernet Port\n";
+            std::cout << "available boards on this Ethernet Port: ";
             for (size_t i = 0; i < EthBoardList.size(); i++) {
                 std::cout << std::hex << static_cast<unsigned int>(EthBoardList[i]->GetBoardId());
                 if (i < EthBoardList.size() - 1) {
@@ -2209,8 +2579,8 @@ void ListBoardsAndPorts(bool usingZynq, bool usingFW, bool usingEth, std::string
         }
 
         if (usingFW) {
-            std::cout << FwPortString << " is availible as a Firewire Port\n";
-            std::cout << "Availible boards on this Firewire Port: ";
+            std::cout << FwPortString << " is available as a Firewire Port\n";
+            std::cout << "available boards on this Firewire Port: ";
             for (size_t i = 0; i < FwBoardList.size(); i++) {
                 std::cout << std::hex << static_cast<unsigned int>(FwBoardList[i]->GetBoardId());
                 if (i < FwBoardList.size() - 1) {
@@ -2221,8 +2591,8 @@ void ListBoardsAndPorts(bool usingZynq, bool usingFW, bool usingEth, std::string
         }
 
         if (usingZynq) {
-            std::cout << ZynqPortString << " is availible as a Zynq Port\n";
-            std::cout << "Availible boards on this Zynq Port: ";
+            std::cout << ZynqPortString << " is available as a Zynq Port\n";
+            std::cout << "available boards on this Zynq Port: ";
             for (size_t i = 0; i < ZynqBoardList.size(); i++) {
                 std::cout << std::hex << static_cast<unsigned int>(ZynqBoardList[i]->GetBoardId());
                 if (i < ZynqBoardList.size() - 1) {
@@ -2231,8 +2601,9 @@ void ListBoardsAndPorts(bool usingZynq, bool usingFW, bool usingEth, std::string
             }   
             std::cout << std::dec << "\n";
         }
-    }
+}
 
+// main
 int main(int argc, char **argv) {
     bool useEthernet = true;
     BasePort::PortType desiredPort = BasePort::PORT_ETH_UDP;
@@ -2356,7 +2727,7 @@ int main(int argc, char **argv) {
         if (!EthPort) {
             std::cout << "Failed to create Ethernet port" << std::endl;
             if (!(usingFW && usingZynq)) {
-                std::cout << "Only one port is active; need at least two ports for this porgram" << std::endl;
+                std::cout << "Only one port is active; need at least two ports for this program" << std::endl;
                 return -1;
             }
         }
@@ -2386,7 +2757,7 @@ int main(int argc, char **argv) {
             usingEth = true;
         }
     } else if (!(usingFW && usingZynq)) {
-        std::cout << "Only one port is active; need at least two ports for this porgram" << std::endl;
+        std::cout << "Only one port is active; need at least two ports for this program" << std::endl;
         return -1;
     }
 
@@ -2445,7 +2816,7 @@ int main(int argc, char **argv) {
     }
 
     std::cout << "To run a test, enter the number or letter before the ')' and then a newline\n";
-    std::cout << "Fox example, only enter \"q\" or \"4\" or \"17\" and then a newline\n";
+    std::cout << "For example, only enter \"q\" or \"4\" or \"17\" and then a newline\n";
     
     std::string input;
     while (!done) {        
@@ -2455,22 +2826,22 @@ int main(int argc, char **argv) {
         std::cout << "  p) Change ports \n";
         std::cout << "  b) Change board \n";
         std::cout << "  c) Current ports and board (and their validity for use) \n";
-        std::cout << "  l) list all ports and boards availible \n";
+        std::cout << "  l) list all ports and boards available \n";
         std::cout << "--------------------------------------    Test Functions    --------------------------------------\n";
-        std::cout << "  0) two commuications methods read; one register \n";
-        std::cout << "  1) one commuication method writes, one reads; one register \n";
-        std::cout << "  2) one commuication method writes, one reads; one register; stress test (both read correctly) \n";
-        std::cout << "  3) two commuication methods read status \n";
-        std::cout << "  4) two commuication methods write different things to status \n";
-        std::cout << "  5) two commuication methods write different things to status and then read status\n";
-        std::cout << "  6) two commuication methods read status and then write different things to status\n";
-        std::cout << "  7) two commuication methods read, then write different things, then read status\n";
-        std::cout << "  8) two commuication methods write different things, then read, then write different things to status\n";
+        std::cout << "  0) two communications methods read; one register \n";
+        std::cout << "  1) one communication method writes, one reads; one register \n";
+        std::cout << "  2) one communication method writes, one reads; one register; stress test (both read correctly) \n";
+        std::cout << "  3) two communication methods read status \n";
+        std::cout << "  4) two communication methods write different things to status \n";
+        std::cout << "  5) two communication methods write different things to status and then read status\n";
+        std::cout << "  6) two communication methods read status and then write different things to status\n";
+        std::cout << "  7) two communication methods read, then write different things, then read status\n";
+        std::cout << "  8) two communication methods write different things, then read, then write different things to status\n";
         std::cout << "  9) one communication method writes to waveform and one reads from waveform\n";
         std::cout << "  10) one communication method reads status and one reads register \n";
         std::cout << "  11) one communication method writes to status and one reads register\n";
         std::cout << "  12) one communication method reads status and one write to register\n";
-        std::cout << "  13) one commuication methods writes to status, one writes to register\n";
+        std::cout << "  13) one communication methods writes to status, one writes to register\n";
         std::cout << "  14) two communication methods read both status and register\n";
         std::cout << "  15) two communication methods write to both status and register\n";
         std::cout << "  16) two communication methods write to and read from both status and register\n";
@@ -2542,119 +2913,119 @@ int main(int argc, char **argv) {
                 std::cout << "Running test 0: two communications methods read; one register\n";
                 ReadSameRegisterTest(portUsingOne, portUsingTwo, curBoardNum);
             } else {
-                 std::cout << "Current ports and board configuartion is invalid; test not run\n";
+                 std::cout << "Current ports and board configuration is invalid; test not run\n";
             }
         } else if (input == "1") {
             if (isValidConfig(validPorts, validBoard)) {
                 std::cout << "Running test 1: one communication method writes, one reads; one register\n";
                 WriteAndReadOneRegisterDifferentMethodsTest(portUsingOne, portUsingTwo, curBoardNum);
             } else {
-                std::cout << "Current ports and board configuartion is invalid; test not run\n";
+                std::cout << "Current ports and board configuration is invalid; test not run\n";
             }
         } else if (input == "2") {
             if (isValidConfig(validPorts, validBoard)) {
                  std::cout << "Running test 2: stress test\n";
                  WriteAndReadOneRegisterDifferentMethodsStressTest(portUsingOne, portUsingTwo, curBoardNum);
             } else {
-                 std::cout << "Current ports and board configuartion is invalid; test not run\n";
+                 std::cout << "Current ports and board configuration is invalid; test not run\n";
             }
         } else if (input == "3") {
             if (isValidConfig(validPorts, validBoard)) {
                 std::cout << "Running test 3: two communication methods read status\n";
                 ReadDifferentThingsDifferentMethodsTest(portUsingOne, portUsingTwo, curBoardNum);
             } else {
-                 std::cout << "Current ports and board configuartion is invalid; test not run\n";
+                 std::cout << "Current ports and board configuration is invalid; test not run\n";
             }
         } else if (input == "4") {
             if (isValidConfig(validPorts, validBoard)) {
                 std::cout << "Running test 4: two communication methods write different things to status\n";
                 WriteDifferentThingsDifferentMethodsTest(portUsingOne, portUsingTwo, curBoardNum);
             } else {
-                 std::cout << "Current ports and board configuartion is invalid; test not run\n";
+                 std::cout << "Current ports and board configuration is invalid; test not run\n";
             }
         } else if (input == "5") {
             if (isValidConfig(validPorts, validBoard)) {
                 std::cout << "Running test 5: write then read status\n";
                 WriteThenReadDifferentThingsDifferentMethodsTest(portUsingOne, portUsingTwo, curBoardNum); 
             } else {
-                 std::cout << "Current ports and board configuartion is invalid; test not run\n";
+                 std::cout << "Current ports and board configuration is invalid; test not run\n";
             }
         } else if (input == "6") {
             if (isValidConfig(validPorts, validBoard)) {
                 std::cout << "Running test 6: read then write status\n";
                 ReadThenWriteDifferentThingsDifferentMethodsTest(portUsingOne, portUsingTwo, curBoardNum);
             } else {
-                 std::cout << "Current ports and board configuartion is invalid; test not run\n";
+                 std::cout << "Current ports and board configuration is invalid; test not run\n";
             }
         } else if (input == "7") {
             if (isValidConfig(validPorts, validBoard)) {
                 std::cout << "Running test 7: read, write, read status\n";
                 RapidReadWriteReadDifferentThingsDifferentMethodsTest(portUsingOne, portUsingTwo, curBoardNum);
             } else {
-                 std::cout << "Current ports and board configuartion is invalid; test not run\n";
+                 std::cout << "Current ports and board configuration is invalid; test not run\n";
             }
         } else if (input == "8") {
             if (isValidConfig(validPorts, validBoard)) {
                 std::cout << "Running test 8: write, read, write status\n";
                 RapidWriteReadWriteDifferentThingsDifferentMethodsTest(portUsingOne, portUsingTwo, curBoardNum); 
             } else {
-                 std::cout << "Current ports and board configuartion is invalid; test not run\n";
+                 std::cout << "Current ports and board configuration is invalid; test not run\n";
             }
         } else if (input == "9") {
              if (isValidConfig(validPorts, validBoard)) {
                 std::cout << "Running test 9: waveform write/read\n";
                 WaveformReadAndWriteDifferentMethodsTest(portUsingOne, portUsingTwo, curBoardNum, selectedBoardOne);
             } else {
-                 std::cout << "Current ports and board configuartion is invalid; test not run\n";
+                 std::cout << "Current ports and board configuration is invalid; test not run\n";
             }
         } else if (input == "10") {
             if (isValidConfig(validPorts, validBoard)) {
                 std::cout << "Running test 10: one reads status, one reads register\n";
                 ReadRegisterAndStatusTest(portUsingOne, portUsingTwo, curBoardNum);
             } else {
-                 std::cout << "Current ports and board configuartion is invalid; test not run\n";
+                 std::cout << "Current ports and board configuration is invalid; test not run\n";
             }
         } else if (input == "11") {
             if (isValidConfig(validPorts, validBoard)) {
                 std::cout << "Running test 11: one writes status, one reads register\n";
                 ReadRegisterWriteStatusTest(portUsingOne, portUsingTwo, curBoardNum);
             } else {
-                 std::cout << "Current ports and board configuartion is invalid; test not run\n";
+                 std::cout << "Current ports and board configuration is invalid; test not run\n";
             }
         } else if (input == "12") {
             if (isValidConfig(validPorts, validBoard)) {
                 std::cout << "Running test 12: one reads status, one writes register\n";
                 WriteRegisterReadStatusTest(portUsingOne, portUsingTwo, curBoardNum);
             } else {
-                 std::cout << "Current ports and board configuartion is invalid; test not run\n";
+                 std::cout << "Current ports and board configuration is invalid; test not run\n";
             }
         } else if (input == "13") {
             if (isValidConfig(validPorts, validBoard)) {
                 std::cout << "Running test 13: one writes status, one writes register\n";
                 WriteRegisterWriteStatusTest(portUsingOne, portUsingTwo, curBoardNum);
             } else {
-                 std::cout << "Current ports and board configuartion is invalid; test not run\n";
+                 std::cout << "Current ports and board configuration is invalid; test not run\n";
             }
         } else if (input == "14") {
             if (isValidConfig(validPorts, validBoard)) {
                 std::cout << "Running test 14: two methods read both status and register\n";
                 ReadRegisterAndStatusStressTest(portUsingOne, portUsingTwo, curBoardNum);
             } else {
-                 std::cout << "Current ports and board configuartion is invalid; test not run\n";
+                 std::cout << "Current ports and board configuration is invalid; test not run\n";
             }
         } else if (input == "15") {
             if (isValidConfig(validPorts, validBoard)) {
                 std::cout << "Running test 15: two methods write to both status and register\n";
                 WriteRegisterAndStatusStressTest(portUsingOne, portUsingTwo, curBoardNum);
             } else {
-                 std::cout << "Current ports and board configuartion is invalid; test not run\n";
+                 std::cout << "Current ports and board configuration is invalid; test not run\n";
             }
         } else if (input == "16") {
             if (isValidConfig(validPorts, validBoard)) {
                 std::cout << "Running test 16: two methods write/read both status and register\n";
                 AlternatingReadAndWriteRegisterAndStatusStressTest(portUsingOne, portUsingTwo, curBoardNum);
             } else {
-                 std::cout << "Current ports and board configuartion is invalid; test not run\n";
+                 std::cout << "Current ports and board configuration is invalid; test not run\n";
             }
         } else {
             std::cout << "Invalid option. Please try again.\n";
