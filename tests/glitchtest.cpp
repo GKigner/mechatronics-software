@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <stdio.h>
 
+
 #include <Amp1394/AmpIORevision.h>
 #ifndef _MSC_VER
 #include <termios.h>
@@ -1255,7 +1256,7 @@ void RapidWriteReadWriteDifferentThingsDifferentMethodsTest(BasePort *portone, B
 *
 *   @return none
 ****************************************************************/
-void WaveformReadAndWriteDifferentMethodsTest(BasePort *portone, BasePort *porttwo, AmpIO *board) {
+void WaveformReadAndWriteDifferentMethodsTest(BasePort *portone, BasePort *porttwo, unsigned char boardNum, AmpIO *board) {
     const unsigned int WLEN = 256;
     quadlet_t waveform[WLEN];
     quadlet_t waveform_read[WLEN];
@@ -1282,7 +1283,6 @@ void WaveformReadAndWriteDifferentMethodsTest(BasePort *portone, BasePort *portt
     waveform_read[WLEN-1] = 0;
     std::cout << "Writing test pattern" << std::endl;
 
-    unsigned char boardNum = board->GetBoardId();
     // explicitly write the waveform table to directly use portone to write (code based on AmpIO.cpp)
     if (portone->GetFirmwareVersion(boardNum) < 7 || portone->GetHardwareVersion(boardNum) == dRA1_String) {
         std::cout << "Writing to waveform table failed" << std::endl;
@@ -1297,7 +1297,7 @@ void WaveformReadAndWriteDifferentMethodsTest(BasePort *portone, BasePort *portt
     for (unsigned short i = 0; i < WLEN; i++) {
         localBuffer[i] = bswap_32(waveform[i]^0x0000000f);
     }
-    if (!(portone->WriteBlock(board->GetBoardId(), address, localBuffer, WLEN*sizeof(quadlet_t)))) {
+    if (!(portone->WriteBlock(boardNum, address, localBuffer, WLEN*sizeof(quadlet_t)))) {
         std::cout << "Writing to waveform table failed" << std::endl;
         return;
     }
@@ -1315,7 +1315,7 @@ void WaveformReadAndWriteDifferentMethodsTest(BasePort *portone, BasePort *portt
         std::cout << "Reading from waveform table failed" << std::endl;
         return;
     }
-    bool ret = porttwo->ReadBlock(board->GetBoardId(), address, waveform_read, WLEN*sizeof(quadlet_t));
+    bool ret = porttwo->ReadBlock(boardNum, address, waveform_read, WLEN*sizeof(quadlet_t));
     if (ret) {
         // Byteswap and invert digital output bits (see WriteDigitalOutput and GetDigitalOutput)
         for (unsigned short i = 0; i < WLEN; i++) {
@@ -1340,7 +1340,7 @@ void WaveformReadAndWriteDifferentMethodsTest(BasePort *portone, BasePort *portt
     // corrected or waveform table becomes corrupted
     if (mismatch) {
         Amp1394_Sleep(0.05);
-        ret = porttwo->ReadBlock(board->GetBoardId(), address, waveform_read, WLEN*sizeof(quadlet_t));
+        ret = porttwo->ReadBlock(boardNum, address, waveform_read, WLEN*sizeof(quadlet_t));
         if (ret) {
             // Byteswap and invert digital output bits (see WriteDigitalOutput and GetDigitalOutput)
             for (unsigned short i = 0; i < WLEN; i++) {
@@ -2098,31 +2098,166 @@ void AlternatingReadAndWriteRegisterAndStatusStressTest(BasePort *portone, BaseP
     Amp1394_Sleep(50*1e-6);
 }
 
-AmpIO *SelectBoard(const std::string &portName, const std::vector<AmpIO *> &boardList, AmpIO *curBoard) {
-    AmpIO *newBoard = curBoard;
-    if (boardList.size() > 1) {
-        size_t i;
-        std::cout << "Select " << portName << " Board: ";
-        for (i = 0; i < boardList.size(); i++)
-            std::cout << std::hex << static_cast<unsigned int>(boardList[i]->GetBoardId()) << " ";
-        std::cout << "(any other key to keep current board " << std::hex << static_cast<unsigned int>(curBoard->GetBoardId())
-                  << std::dec << ")" << std::endl;
-        int num = getchar();
-        if ((num >= '0') && (num <= '9')) num -= '0';
-        else if ((num >= 'a') && (num <= 'f')) num = 10 + (num - 'a');
-        else if ((num >= 'A') && (num <= 'F')) num = 10 + (num - 'A');
-        else num = -1;
-        std::cout << std::endl;
-        if (num >= 0) {
-            for (i = 0; i < boardList.size(); i++) {
-                if (num == boardList[i]->GetBoardId()) {
-                    newBoard = boardList[i];
-                    break;
-                }
+bool SelectCommonBoard(const std::string &portNameOne, const std::string &portNameTwo,
+                       const std::vector<AmpIO *> &boardListOne,
+                       const std::vector<AmpIO *> &boardListTwo, 
+                       AmpIO *&selectedBoardOne, AmpIO *&selectedBoardTwo,
+                       unsigned char &curBoardNum) {
+    
+    // Find common boards between the two lists
+    std::vector<AmpIO *> commonBoardsOne;
+    std::vector<AmpIO *> commonBoardsTwo;
+    
+    for (size_t i = 0; i < boardListOne.size(); i++) {
+        for (size_t j = 0; j < boardListTwo.size(); j++) {
+            if (boardListOne[i]->GetBoardId() == boardListTwo[j]->GetBoardId()) {
+                commonBoardsOne.push_back(boardListOne[i]);
+                commonBoardsTwo.push_back(boardListTwo[j]);
+                break;
             }
         }
     }
-    return newBoard;
+    
+    // If no common boards found, return false
+    if (commonBoardsOne.empty()) {
+        std::cout << "No common boards found between " << portNameOne << " and " << portNameTwo << std::endl;
+        return false;
+    }
+    
+    // If only one common board, select it automatically
+    if (commonBoardsOne.size() == 1) {
+        selectedBoardOne = commonBoardsOne[0];
+        selectedBoardTwo = commonBoardsTwo[0];
+        curBoardNum = static_cast<unsigned char>(commonBoardsOne[0]->GetBoardId());
+        std::cout << "Automatically selected common board: " << std::hex 
+                  << static_cast<unsigned int>(commonBoardsOne[0]->GetBoardId()) << std::dec << std::endl;
+        return true;
+    }
+    
+    // Multiple common boards - user must select one
+    std::cout << "Select common board between " << portNameOne << " and " << portNameTwo << ": ";
+    for (size_t i = 0; i < commonBoardsOne.size(); i++) {
+        std::cout << std::hex << static_cast<unsigned int>(commonBoardsOne[i]->GetBoardId()) << " ";
+    }
+    std::cout << std::dec << std::endl;
+    
+    int num = getchar();
+    if ((num >= '0') && (num <= '9')) num -= '0';
+    else if ((num >= 'a') && (num <= 'f')) num = 10 + (num - 'a');
+    else if ((num >= 'A') && (num <= 'F')) num = 10 + (num - 'A');
+    else {
+        std::cout << "Invalid input. Selection failed." << std::endl;
+        return false;
+    }
+    
+    std::cout << std::endl;
+    
+    // Find the selected board in common boards list
+    for (size_t i = 0; i < commonBoardsOne.size(); i++) {
+        if (num == commonBoardsOne[i]->GetBoardId()) {
+            selectedBoardOne = commonBoardsOne[i];
+            selectedBoardTwo = commonBoardsTwo[i];
+            curBoardNum = static_cast<unsigned char>(commonBoardsOne[i]->GetBoardId());
+            std::cout << "Selected common board: " << std::hex 
+                      << static_cast<unsigned int>(commonBoardsOne[i]->GetBoardId()) << std::dec << std::endl;
+            return true;
+        }
+    }
+    
+    // Selected board ID not found in common boards
+    std::cout << "Selected board not available in both ports. Selection failed." << std::endl;
+    return false;
+}
+
+bool SelectPorts(bool usingZync, bool usingFW, bool usingEth, BasePort *&portUsingOne, BasePort *&portUsingTwo,
+    std::string EthPortString, std::string FwPortString, std::string ZyncPortString,  BasePort *FwPort, 
+    BasePort *ZyncPort, EthBasePort *EthPort, std::vector<AmpIO *> ZyncBoardList, std::vector<AmpIO *> FwBoardList,
+    std::vector<AmpIO *> EthBoardList, std::vector<AmpIO *> &portUsingOneBoardList, 
+    std::vector<AmpIO *> &portUsingTwoBoardList) {
+    std::cout << "Ports availible: \n";
+    if (usingEth) {
+        std::cout << "1) " << EthPortString << "\n";
+    } 
+    if (usingFW) {
+        std::cout << "2) " << FwPortString << "\n";
+    } 
+    if (usingZync) {
+        std::cout << "3) " << ZyncPortString << "\n";
+    } 
+
+    std::cout << "enter the two numbers of the ports next to each other to choose them \n";
+    std::cout << "Example: enter '13' and then a newline to choose ethernet as the first port and Zync as the second port\n";
+    std::string input;
+    std::getline(std::cin, input);
+    input.erase(std::remove_if(input.begin(), input.end(), ::isspace), input.end());
+    std::transform(input.begin(), input.end(), input.begin(), ::tolower);
+    if (input == "12") {
+        if (usingEth && usingFW) {
+            portUsingOne = EthPort;
+            portUsingTwo = FwPort;
+            portUsingOneBoardList = EthBoardList;
+            portUsingTwoBoardList = FwBoardList;
+            return true;
+        } else {
+            return false;
+        }
+    } else if (input == "13") {
+        if (usingEth && usingZync) {
+            portUsingOne = EthPort;
+            portUsingTwo = ZyncPort;
+            portUsingOneBoardList = EthBoardList;
+            portUsingTwoBoardList = ZyncBoardList;
+            return true;
+        } else {
+            return false;
+        }
+    } else if (input == "21") {
+        if (usingFW && usingEth) {
+            portUsingOne = FwPort;
+            portUsingTwo = EthPort;
+            portUsingOneBoardList = FwBoardList;
+            portUsingTwoBoardList = EthBoardList;
+            return true;
+        } else {
+            return false;
+        }
+    } else if (input == "23") {
+        if (usingFW && usingZync) {
+            portUsingOne = FwPort;
+            portUsingTwo = ZyncPort;
+            portUsingOneBoardList = FwBoardList;
+            portUsingTwoBoardList = ZyncBoardList;
+            return true;
+        } else {
+            return false;
+        }
+    } else if (input == "31") {
+        if (usingZync && usingEth) {
+            portUsingOne = ZyncPort;
+            portUsingTwo = EthPort;
+            portUsingOneBoardList = ZyncBoardList;
+            portUsingTwoBoardList = EthBoardList;
+            return true;
+        } else {
+            return false;
+        }
+    } else if (input == "32") {
+        if (usingZync && usingFW) {
+            portUsingOne = ZyncPort;
+            portUsingTwo = FwPort;
+            portUsingOneBoardList = ZyncBoardList;
+            portUsingTwoBoardList = FwBoardList;
+            return true;
+        } else {
+           return false;
+        }
+    } else {
+        return false;
+    }
+}
+
+bool isValidConfig(bool validPorts, bool validBoard) {
+    return validPorts && validBoard;
 }
 
 
@@ -2201,7 +2336,7 @@ int main(int argc, char **argv) {
         usingFW = true;
     } 
 
-    if (InitZync(ZyncPort, FwBoardList, port, isVerbose)) {
+    if (InitZync(ZyncPort, ZyncBoardList, port, isVerbose)) {
         std::cout << "Zync Initialized \n";
         usingZync = true;
     } 
@@ -2302,24 +2437,46 @@ int main(int argc, char **argv) {
     quadlet_t read_data;
     quadlet_t write_data = 0L;
     quadlet_t buffer[128];
+    BasePort *portUsingOne = 0;   // first port being used (Ethernet, Firewire or Zynq-EMIO)
+    BasePort *portUsingTwo = 0;   // second port being used (Ethernet, Firewire or Zynq-EMIO)
+    std::vector<AmpIO *> portUsingOneBoardList;
+    std::vector<AmpIO *> portUsingTwoBoardList;
+    AmpIO *selectedBoardOne = 0;
+    AmpIO *selectedBoardTwo = 0;
+    bool validPorts = false;
+    bool validBoard = false;
+    unsigned char curBoardNum = 0;
 
     std::cout << std::endl << "Glitch Test Program" << std::endl;
-    std::cout << "Ports availible: \n";
-    if (usingEth) {
-        std::cout << EthPortString << "\n";
-    } 
-    if (usingFW) {
-        std::cout << FwPortString << "\n";
-    } 
-    if (usingZync) {
-        std::cout << ZyncPortString << "\n";
-    } 
+    validPorts = SelectPorts(usingZync, usingFW, usingEth, portUsingOne, portUsingTwo, EthPortString, 
+                    FwPortString, ZyncPortString, FwPort, ZyncPort, EthPort, ZyncBoardList, FwBoardList,
+                    EthBoardList, portUsingOneBoardList, portUsingTwoBoardList);
+    std::cout << "Port one now selected to be " << portUsingOne->GetPortTypeString() << "\n";
+    std::cout << "Port two now selected to be " << portUsingTwo->GetPortTypeString() << "\n";
+    if (validPorts) {
+        std::cout << "These are valid ports for use\n";
+    } else {
+        std::cout << "These are invalid ports for use\n";
+    }
 
-    std::cout << "To run a test, enter the number or letter before the ')' and then a newline\n"
-    std::cout << "Fox example, only enter \"q\" or \"4\" or \"17\" and then a newline\n"
+    if (portUsingOne && portUsingTwo && validPorts) { // ensure not null pointers or invalid ports
+        validBoard = SelectCommonBoard(portUsingOne->GetPortTypeString(), portUsingTwo->GetPortTypeString(),
+                        portUsingOneBoardList, portUsingTwoBoardList, selectedBoardOne, selectedBoardTwo, curBoardNum);
+        std::cout << "Board now set to board " << curBoardNum << "\n";
+        if (validBoard) {
+            std::cout << "This board is valid for use\n";
+        } else {
+            std::cout << "This board is invalid for use\n";
+        }
+    } else {
+        std::cout << "One of the current ports is null or the current ports are invalid\n";
+    }
+
+    std::cout << "To run a test, enter the number or letter before the ')' and then a newline\n";
+    std::cout << "Fox example, only enter \"q\" or \"4\" or \"17\" and then a newline\n";
     
+    std::string input;
     while (!done) {
-        unsigned char curBoardNum = curBoard->GetBoardId();
         unsigned char EthBoardNum = 0;
         unsigned char FwBoardNum = 0;
         unsigned char ZyncBoardNum = 0;
@@ -2361,8 +2518,10 @@ int main(int argc, char **argv) {
         
         std::cout << "-------------------------------------- Logistical Functions --------------------------------------\n";
         std::cout << "  q) Quit \n";
-        std::cout << "  p) Ethernet status \n";
+        std::cout << "  s) Ethernet status \n";
+        std::cout << "  p) Change ports \n";
         std::cout << "  b) Change board \n";
+        std::cout << "  c) Current ports and board (and their validity for use) \n";
         std::cout << "--------------------------------------    Test Functions    --------------------------------------\n";
         std::cout << "  0) two commuications methods read; one register \n";
         std::cout << "  1) one commuication method writes, one reads; one register \n";
@@ -2383,282 +2542,184 @@ int main(int argc, char **argv) {
         std::cout << "  16) two communication methods write to and read from both status and register\n";
 
 
+        std::getline(std::cin, input);
+        input.erase(std::remove_if(input.begin(), input.end(), ::isspace), input.end());
+        std::transform(input.begin(), input.end(), input.begin(), ::tolower);
 
-        int c = getchar();
-        std::cout << std::endl << std::endl;
-
-        nodeaddr_t addr;
-        quadlet_t fw_block_data[28];
-        quadlet_t eth_block_data[28];
-        int i;
-        char buf[5];
-
-        switch (c) {
-        case '0':   // Quit
-                done = true;
-                break;
-
-        case '1':   // Write quadlet from PC to FPGA
-            if (write_data == 0x000f0000)
-                write_data = 0x000a0000;   // power/relay off
-            else
-                write_data = 0x000f0000;   // power/relay on
-            if (!curPort->WriteQuadlet(curBoardNum, 0x0, write_data ))
-                std::cout << "Failed to write quadlet via " << curPortString << " port" << std::endl;
-            else
-                std::cout << "Write data = 0x" << std::hex << write_data << "\n";
-            break;
-
-        case '2':  
-            break;
-
-        case '3':
-            memset(fw_block_data, 0, sizeof(fw_block_data));
-            if (curBoardFw) {
-                if (!FwPort->ReadBlock(FwBoardNum, 0, fw_block_data, sizeof(fw_block_data)))
-                    std::cout << "Failed to read block data via " << FwPortString << " port" << std::endl;
-            }
-            memset(eth_block_data, 0, sizeof(eth_block_data));
-            if (curBoardEth) {
-                if (!EthPort->ReadBlock(EthBoardNum, 0, eth_block_data, sizeof(eth_block_data)))
-                    std::cout << "Failed to read block data via " << EthPortString << " port" << std::endl;
-                else
-                    std::cout << "FPGA Recv time (us): " << EthPort->GetFpgaReceiveTime()*1.0e6
-                              << ", FPGA Total time (us): " << EthPort->GetFpgaTotalTime()*1.0e6 << std::endl;
-            }
-            std::cout << "     " << FwPortString << "   " << EthPortString << std::endl;
-            for (i = 0; static_cast<size_t>(i) < sizeof(fw_block_data)/sizeof(quadlet_t); i++) {
-                std::cout << std::setw(2) << std::setfill(' ') << std::dec << i << ":  "
-                          << std::setw(8) << std::setfill('0') <<  std::hex
-                          << bswap_32(fw_block_data[i]) << "    " << std::setw(8) << std::setfill('0')
-                          << bswap_32(eth_block_data[i]) << std::endl;
-            }
-            break;
-
-        case '4':
-            break;
-
-        case '5':
-            break;
-
-        case '6':
-            if (curPort == FwPort) {
-                if (fpga_ver == 2) {
-                    InitEthernet(*curBoard, 0);
-                }
-                else if (fpga_ver == 3) {
-                    std::cout << "FPGA V3, Eth1: ";
-                    InitEthernet(*curBoard, 1);
-                    std::cout << "FPGA V3, Eth2: ";
-                    InitEthernet(*curBoard, 2);
-                }
-            }
-            break;
-
-        case '7':
+        if (input == "q") {
+            std::cout << "Quitting program...\n";
+            done = true;
+        } else if (input == "s") {
+            std::cout << "Checking Ethernet status...\n";
             PrintEthernetStatus(*curBoard);
-            break;
-
-        case '8':   // Multicast quadlet read (not supported on Firewire)
-            if (true || (curPort == EthPort)) {
-                read_data = 0;
-                addr = 0;  // Return status register
-                if (curPort->ReadQuadlet(FW_NODE_BROADCAST, addr, read_data))
-                    std::cout << "Read quadlet data: " << std::hex << read_data << std::endl;
-                else
-                    std::cout << "Failed to read quadlet via " << curPortString << " port" << std::endl;
-            }
-            break;
-
-        case 'a':
-            break;
-
-        case 'B':
-            break;
-
-        case 'b':
-            if ((curPort == FwPort) && (FwBoardList.size() > 1))
-                curBoardFw = SelectBoard(FwPortString, FwBoardList, curBoardFw);
-            else if ((curPort == EthPort) && (EthBoardList.size() > 1))
-                curBoardEth = SelectBoard(EthPortString, EthBoardList, curBoardEth);
-            break;
-
-        case 'c':
-            break;
-
-        case 'C':
-            break;
-
-        case 'd':
-            break;
-
-        case 'e':
-            if ((fpga_ver == 2) && (curPort == FwPort)) {
-                uint16_t reg;
-                if (curBoard->ReadKSZ8851Reg(0x90, reg))
-                    std::cout << "IER    = 0x" << std::hex << reg << "  ";
-                if (curBoard->ReadKSZ8851Reg(0x92, reg))
-                    std::cout << "ISR    = 0x" << std::hex << reg << "  ";
-                if (curBoard->ReadKSZ8851Reg(0x9C, reg))
-                    std::cout << "RXFCTR = 0x" << std::hex << reg << "  ";
-                if (curBoard->ReadKSZ8851Reg(0x7C, reg))
-                    std::cout << "RXFHSR = 0x" << std::hex << reg << "  ";
-                if (curBoard->ReadKSZ8851Reg(0x80, reg))
-                    std::cout << "TXQCR = 0x" << std::hex << reg << std::endl;
-            }
-            break;
-
-        case 'f':
-            break;
-
-        case 'i':
-            std::cout << "IP Address = " << EthUdpPort::IP_String(curBoard->ReadIPv4Address()) << std::endl;
-            break;
-
-        case 'I':
-            if (curBoard->WriteIPv4Address(0xffffffff))
-                std::cout << "Write IP address 255.255.255.255" << std::endl;
-            else
-                std::cout << "Failed to write IP address" << std::endl;
-            break;
-
-        case 'm':   // TEST I/O EXPANDER
-            break;
-
-        case 'p':    // Select Ethernet or Firewire/Zynq-EMIO
-            if (curBoardFw && curBoardEth) {
-                if (curPort == FwPort) {
-                    curPort = EthPort;
-                    curPortString = EthPortString;
-                }
-                else {
-                    curPort = FwPort;
-                    curPortString = FwPortString;
-                }
-            }
-            break;
-
-        case 'P':
-            break;
-
-        case 'r':
-            if (curPort->IsOK())
-                curPort->CheckFwBusGeneration(curPortString, true);
-            break;
-
-        case 'R':
-            break;
-
-        case 't':
-            break;
-
-        case 'v':
-            // Measure power supply voltage (QLA 1.5+)
-            if (curBoard->GetHardwareVersion() == DQLA_String) {
-                double V1 = MeasureMotorSupplyVoltage(curPort, curBoard, 1);
-                double V2 = MeasureMotorSupplyVoltage(curPort, curBoard, 2);
-                std::cout << "Measured motor supply voltages: " << V1 << ", " << V2 << std::endl;
-            }
-            else if (curBoard->GetHardwareVersion() == QLA1_String) {
-                double V = MeasureMotorSupplyVoltage(curPort, curBoard);
-                std::cout << "Measured motor supply voltage: " << V << std::endl;
-            }
-            break;
-
-        case 'w':
-            break;
-
-        case 'x':
-            if (curBoard->ReadEthernetData(buffer, 0xc0, 16))                       // PacketBuffer
-                EthBasePort::PrintEthernetPacket(std::cout, buffer, 16);
-            if (curBoard->ReadEthernetData(buffer, 0, 64))                          // FireWire packet
-                EthBasePort::PrintFirewirePacket(std::cout, buffer, 64);
-            if (curBoard->ReadEthernetData(buffer, 0x80, 16))                       // EthernetIO DebugData
-                EthBasePort::PrintDebugData(std::cout, buffer, clkPeriod);
-            if (fpga_ver == 2) {
-                if (curBoard->ReadEthernetData(buffer, 0x90, 16))                   // Low-level DebugData
-                    EthBasePort::PrintDebugDataKSZ(std::cout, buffer, clkPeriod);   // KSZ8851 (FPGA V2)
-            }
-            else if (fpga_ver == 3) {
-                if (curBoard->ReadEthernetData(buffer, 0x1a0, 2))                   // Low-level DebugData
-                    EthBasePort::PrintDebugDataRTL(std::cout, buffer, "Eth1");      // RTL8211F
-                if (curBoard->ReadEthernetData(buffer, 0x2a0, 2))                   // Low-level DebugData
-                    EthBasePort::PrintDebugDataRTL(std::cout, buffer, "Eth2");      // RTL8211F
-                if (curBoard->ReadEthernetData(buffer, 0x4a0, 16))                  // Low-level DebugData
-                    EthBasePort::PrintDebugDataRTI(std::cout, buffer, clkPeriod);   // EthRtInterface (FPGA V3)
-                uint32_t ethStatus;
-                curBoard->ReadEthernetStatus(ethStatus);
-                if (ethStatus & FpgaIO::ETH_STAT_CLK200_OK_V3)
-                    std::cout << "200 MHz clock running" << std::endl;
-                else
-                    std::cout << "**** 200 MHz clock not running -- initialize PS" << std::endl;
-                if (ethStatus & FpgaIO::ETH_STAT_CLK125_OK_V3)
-                    std::cout << "125 MHz clock running" << std::endl;
-                else
-                    std::cout << "**** 125 MHz clock not running -- initialize PS" << std::endl;
-            }
-#if 0
-            if ((fpga_ver == 2) && (curBoard->ReadEthernetData(buffer, 0xa0, 32))) {
-                std::cout << "Initialization Program:" << std::endl;
-                for (int i = 0; i < 32; i++) {
-                    if (i == 16)
-                       std::cout << "Run Program:" << std::endl;
-                    if (buffer[i] != 0) {
-                       if (buffer[i]&0x02000000) std::cout << "   Write ";
-                       else std::cout << "   Read  ";
-                       std::cout << std::hex << std::setw(2) << std::setfill('0')
-                                 << ((buffer[i]&0x00ff0000)>>16) << " ";           // address
-                       std::cout << std::hex << std::setw(4) << std::setfill('0')
-                                 << (buffer[i]&0x0000ffff);
-                       if (buffer[i]&0x01000000) std::cout << " MOD";
-                       std::cout << std::endl;
+        } else if (input == "p") {
+            std::cout << "Changing ports...\n";
+            validPorts = SelectPorts(usingZync, usingFW, usingEth, portUsingOne, portUsingTwo, EthPortString, 
+                    FwPortString, ZyncPortString, FwPort, ZyncPort, EthPort, ZyncBoardList, FwBoardList,
+                    EthBoardList, portUsingOneBoardList, portUsingTwoBoardList);
+                    std::cout << "Port one now selected to be " << portUsingOne->GetPortTypeString() << "\n";
+                    std::cout << "Port two now selected to be " << portUsingTwo->GetPortTypeString() << "\n";
+                    if (validPorts) {
+                        std::cout << "These are valid ports for use\n";
+                    } else {
+                        std::cout << "These are invalid ports for use\n";
                     }
+        } else if (input == "b") {
+            std::cout << "Changing board...\n";
+            if (portUsingOne && portUsingTwo) { // ensure not null pointers
+                validBoard = SelectCommonBoard(portUsingOne->GetPortTypeString(), portUsingTwo->GetPortTypeString(),
+                                portUsingOneBoardList, portUsingTwoBoardList, selectedBoardOne, selectedBoardTwo, curBoardNum);
+                std::cout << "Board now set to board " << curBoardNum << "\n";
+                if (validBoard) {
+                    std::cout << "This board is valid for use\n";
+                } else {
+                    std::cout << "This board is invalid for use\n";
                 }
+            } else {
+                std::cout << "One of the current ports is null\n";
             }
-            if (curBoard->ReadEthernetData(buffer, 0xe0, 21)) {                    // ReplyIndex
-                const uint16_t *packetw = reinterpret_cast<const uint16_t *>(buffer);
-                std::cout << "ReplyIndex: " << std::endl;
-                for (int i = 0; i < 41; i++)
-                    std::cout << std::dec << i << ":  " << packetw[i] << std::endl;
+        } else if (input == "c") {
+            if (portUsingOne && portUsingTwo) { // ensure not null pointers
+                std::cout << "Current Port One: " << portUsingOne->GetPortTypeString() << "\n";
+                std::cout << "Current Port Two: " << portUsingTwo->GetPortTypeString() << "\n";
+                std::cout << "Current Board ID: " << curBoardNum << "\n";
             }
-#endif
-            break;
-
-        case 'X':
-            curBoard->WriteEthernetClearErrors();
-            break;
-
-        case 'y':
-            if (curPort == EthPort) {
-                // Can only read Firewire packet from Ethernet interface
-                if (curBoard->ReadFirewireData(buffer, 0, 64)) {
-                    EthBasePort::PrintFirewirePacket(std::cout, buffer, 64);
-                }
+            if (validPorts && validBoard) {
+                std::cout << "This configuration is valid for use\n";
+            } else {
+                std::cout << "This configuration is invalid for use\n";
             }
-            if (curBoard->ReadFirewireData(buffer, 0x200, 4)) {
-                std::cout << "Firewire debug data:" << std::endl;
-                FpgaIO::PrintFirewireDebug(std::cout, buffer);
+        } else if (input == "0") {
+            if (isValidConfig(validPorts, validBoard)) {
+                std::cout << "Running test 0: two communications methods read; one register\n";
+                ReadSameRegisterTest(portUsingOne, portUsingTwo, curBoardNum);
+            } else {
+                 std::cout << "Current ports and board configuartion is invalid; test not run\n";
             }
-            break;
-
-        case 'z':
-            std::cout << "FPGA Rev " << fpga_ver << std::endl;
-            if (fpga_ver == 2) {
-                // Check that KSZ8851 registers are as expected
-                if (!CheckEthernetV2(*curBoard))
-                    PrintEthernetStatus(*curBoard);
+        } else if (input == "1") {
+            if (isValidConfig(validPorts, validBoard)) {
+                std::cout << "Running test 1: one communication method writes, one reads; one register\n";
+                WriteAndReadOneRegisterDifferentMethodsTest(portUsingOne, portUsingTwo, curBoardNum);
+            } else {
+                std::cout << "Current ports and board configuartion is invalid; test not run\n";
             }
-            else if (fpga_ver == 3) {
-                CheckEthernetV3(*curBoard, 1);
-                CheckEthernetV3(*curBoard, 2);
+        } else if (input == "2") {
+            if (isValidConfig(validPorts, validBoard)) {
+                 std::cout << "Running test 2: stress test\n";
+                 WriteAndReadOneRegisterDifferentMethodsStressTest(portUsingOne, portUsingTwo, curBoardNum);
+            } else {
+                 std::cout << "Current ports and board configuartion is invalid; test not run\n";
             }
-            break;
+        } else if (input == "3") {
+            if (isValidConfig(validPorts, validBoard)) {
+                std::cout << "Running test 3: two communication methods read status\n";
+                ReadDifferentThingsDifferentMethodsTest(portUsingOne, portUsingTwo, curBoardNum);
+            } else {
+                 std::cout << "Current ports and board configuartion is invalid; test not run\n";
+            }
+        } else if (input == "4") {
+            if (isValidConfig(validPorts, validBoard)) {
+                std::cout << "Running test 4: two communication methods write different things to status\n";
+                WriteDifferentThingsDifferentMethodsTest(portUsingOne, portUsingTwo, curBoardNum);
+            } else {
+                 std::cout << "Current ports and board configuartion is invalid; test not run\n";
+            }
+        } else if (input == "5") {
+            if (isValidConfig(validPorts, validBoard)) {
+                std::cout << "Running test 5: write then read status\n";
+                WriteThenReadDifferentThingsDifferentMethodsTest(portUsingOne, portUsingTwo, curBoardNum); 
+            } else {
+                 std::cout << "Current ports and board configuartion is invalid; test not run\n";
+            }
+        } else if (input == "6") {
+            if (isValidConfig(validPorts, validBoard)) {
+                std::cout << "Running test 6: read then write status\n";
+                ReadThenWriteDifferentThingsDifferentMethodsTest(portUsingOne, portUsingTwo, curBoardNum);
+            } else {
+                 std::cout << "Current ports and board configuartion is invalid; test not run\n";
+            }
+        } else if (input == "7") {
+            if (isValidConfig(validPorts, validBoard)) {
+                std::cout << "Running test 7: read, write, read status\n";
+                RapidReadWriteReadDifferentThingsDifferentMethodsTest(portUsingOne, portUsingTwo, curBoardNum);
+            } else {
+                 std::cout << "Current ports and board configuartion is invalid; test not run\n";
+            }
+        } else if (input == "8") {
+            if (isValidConfig(validPorts, validBoard)) {
+                std::cout << "Running test 8: write, read, write status\n";
+                RapidWriteReadWriteDifferentThingsDifferentMethodsTest(portUsingOne, portUsingTwo, curBoardNum); 
+            } else {
+                 std::cout << "Current ports and board configuartion is invalid; test not run\n";
+            }
+        } else if (input == "9") {
+             if (isValidConfig(validPorts, validBoard)) {
+                std::cout << "Running test 9: waveform write/read\n";
+                WaveformReadAndWriteDifferentMethodsTest(portUsingOne, portUsingTwo, curBoardNum, selectedBoardOne);
+            } else {
+                 std::cout << "Current ports and board configuartion is invalid; test not run\n";
+            }
+        } else if (input == "10") {
+            if (isValidConfig(validPorts, validBoard)) {
+                std::cout << "Running test 10: one reads status, one reads register\n";
+                ReadRegisterAndStatusTest(portUsingOne, portUsingTwo, curBoardNum);
+            } else {
+                 std::cout << "Current ports and board configuartion is invalid; test not run\n";
+            }
+        } else if (input == "11") {
+            if (isValidConfig(validPorts, validBoard)) {
+                std::cout << "Running test 11: one writes status, one reads register\n";
+                ReadRegisterWriteStatusTest(portUsingOne, portUsingTwo, curBoardNum);
+            } else {
+                 std::cout << "Current ports and board configuartion is invalid; test not run\n";
+            }
+        } else if (input == "12") {
+            if (isValidConfig(validPorts, validBoard)) {
+                std::cout << "Running test 12: one reads status, one writes register\n";
+                WriteRegisterReadStatusTest(portUsingOne, portUsingTwo, curBoardNum);
+            } else {
+                 std::cout << "Current ports and board configuartion is invalid; test not run\n";
+            }
+        } else if (input == "13") {
+            if (isValidConfig(validPorts, validBoard)) {
+                std::cout << "Running test 13: one writes status, one writes register\n";
+                WriteRegisterWriteStatusTest(portUsingOne, portUsingTwo, curBoardNum);
+            } else {
+                 std::cout << "Current ports and board configuartion is invalid; test not run\n";
+            }
+        } else if (input == "14") {
+            if (isValidConfig(validPorts, validBoard)) {
+                std::cout << "Running test 14: two methods read both status and register\n";
+                ReadRegisterAndStatusStressTest(portUsingOne, portUsingTwo, curBoardNum);
+            } else {
+                 std::cout << "Current ports and board configuartion is invalid; test not run\n";
+            }
+        } else if (input == "15") {
+            if (isValidConfig(validPorts, validBoard)) {
+                std::cout << "Running test 15: two methods write to both status and register\n";
+                WriteRegisterAndStatusStressTest(portUsingOne, portUsingTwo, curBoardNum);
+            } else {
+                 std::cout << "Current ports and board configuartion is invalid; test not run\n";
+            }
+        } else if (input == "16") {
+            if (isValidConfig(validPorts, validBoard)) {
+                std::cout << "Running test 16: two methods write/read both status and register\n";
+                AlternatingReadAndWriteRegisterAndStatusStressTest(portUsingOne, portUsingTwo, curBoardNum);
+            } else {
+                 std::cout << "Current ports and board configuartion is invalid; test not run\n";
+            }
+        } else {
+            std::cout << "Invalid option. Please try again.\n";
         }
     }
+
+
 
 #ifndef _MSC_VER
     tcsetattr(0, TCSANOW, &oldTerm);  // Restore terminal I/O settings
 #endif
+
+    // Clean up Firewire port and boards
     if (FwPort) {
         for (unsigned int bd = 0; bd < FwBoardList.size(); bd++) {
             FwPort->RemoveBoard(FwBoardList[bd]->GetBoardId());
@@ -2666,6 +2727,17 @@ int main(int argc, char **argv) {
         }
         delete FwPort;
     }
+
+    // Clean up Zynq port and boards
+    if (ZyncPort) {
+        for (unsigned int bd = 0; bd < ZyncBoardList.size(); bd++) {
+            ZyncPort->RemoveBoard(ZyncBoardList[bd]->GetBoardId());
+            delete ZyncBoardList[bd];
+        }
+        delete ZyncPort;
+    }
+
+    // Clean up Ethernet port and boards
     if (EthPort) {
         for (unsigned int bd = 0; bd < EthBoardList.size(); bd++) {
             EthPort->RemoveBoard(EthBoardList[bd]->GetBoardId());
@@ -2673,5 +2745,6 @@ int main(int argc, char **argv) {
         }
         delete EthPort;
     }
+
     return 0;
 }
